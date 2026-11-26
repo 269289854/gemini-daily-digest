@@ -70,7 +70,7 @@ fn spawn_poller_loop(deps: ComposerDeps, mut shutdown_rx: watch::Receiver<bool>)
                     if *shutdown_rx.borrow() {
                         break;
                     }
-                    if let Err(err) = poller::run_poller_tick(
+                    if let Err(err) = poller::run_poller_tick_with_platform_x(
                         &deps.repos,
                         &deps.cache,
                         &deps.cipher,
@@ -78,6 +78,7 @@ fn spawn_poller_loop(deps: ComposerDeps, mut shutdown_rx: watch::Receiver<bool>)
                         &deps.pipeline,
                         &deps.config.core.collector,
                         &deps.config.core.resources,
+                        deps.config.platform_x_bridge_base_url.as_deref(),
                     ).await {
                         tracing::error!(error = %err, "Layer 1 poller tick failed");
                     }
@@ -1002,6 +1003,7 @@ pub(crate) mod test_support {
         channels: Mutex<Vec<NotificationChannelRecord>>,
         schedules: Mutex<HashMap<Uuid, UserScheduleRecord>>,
         watchlist: Mutex<Vec<WatchlistRuleRecord>>,
+        platform: Mutex<Option<PlatformSettingsRecord>>,
     }
 
     #[async_trait]
@@ -1229,6 +1231,30 @@ pub(crate) mod test_support {
             _rule_id: Uuid,
         ) -> Result<(), CoreError> {
             Ok(())
+        }
+
+        async fn get_platform_settings(&self) -> Result<Option<PlatformSettingsRecord>, CoreError> {
+            Ok(self.platform.lock().unwrap().clone())
+        }
+
+        async fn upsert_platform_settings(
+            &self,
+            cmd: UpsertPlatformSettingsRecord,
+        ) -> Result<PlatformSettingsRecord, CoreError> {
+            let rec = PlatformSettingsRecord {
+                x_bridge_base_url: cmd.x_bridge_base_url,
+                x_bridge_reload_url: cmd.x_bridge_reload_url,
+                x_bridge_reload_secret_enc: cmd.x_bridge_reload_secret_enc,
+                x_bridge_reload_secret_hint: cmd.x_bridge_reload_secret_hint,
+                x_auth_token_enc: cmd.x_auth_token_enc,
+                x_auth_token_hint: cmd.x_auth_token_hint,
+                x_bearer_token_enc: cmd.x_bearer_token_enc,
+                x_bearer_token_hint: cmd.x_bearer_token_hint,
+                updated_by: cmd.updated_by,
+                updated_at: Some(Utc::now()),
+            };
+            *self.platform.lock().unwrap() = Some(rec.clone());
+            Ok(rec)
         }
     }
 

@@ -9,7 +9,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use digest_core::constants::SECRET_MASK_REDACTED_PLACEHOLDER;
 use digest_core::domain::{DeliveryStatus, FetchOutcome, NotificationChannelType, SseEventType};
 use digest_core::error::CoreError;
-use digest_core::traits::AiModelOption;
+use digest_core::traits::{AiModelOption, FetchResult, SourceDescriptor};
 use http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -203,6 +203,19 @@ pub trait ExecutionOrchestrator: Send + Sync {
         user_id: Uuid,
         delivery_id: Uuid,
     ) -> Result<DeliveryLogRecord, CoreError>;
+
+    async fn test_platform_x_descriptor(
+        &self,
+        _descriptor: SourceDescriptor,
+        _platform_x: &crate::scheduler::poller::EffectivePlatformXConfig,
+    ) -> Result<FetchResult, CoreError> {
+        Ok(FetchResult {
+            outcome: FetchOutcome::Updated,
+            items: Vec::new(),
+            etag: None,
+            last_modified: None,
+        })
+    }
 }
 
 #[cfg(test)]

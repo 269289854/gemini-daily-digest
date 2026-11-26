@@ -551,8 +551,23 @@ describe('SettingsPage, all 5 Settings Panels, and App Integration', () => {
     );
 
     expect(await screen.findByText('AI Provider Configuration')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: /Platform \(Admin\)/i })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: /Desktop & MCP/i }));
     expect(screen.getByText('MCP Client Config Snippets')).toBeInTheDocument();
+
+    cleanup();
+
+    render(
+      <SettingsPage
+        api={api}
+        bridge={bridge}
+        serverBaseUrl=""
+        onServerBaseUrlChange={vi.fn()}
+        initialTab={SETTINGS_TABS.AI}
+        isAdmin
+      />,
+    );
+    expect(await screen.findByRole('tab', { name: /Platform \(Admin\)/i })).toBeInTheDocument();
   });
 
   it('App renders Sign-In screen with Server Base URL override in OIDC mode and supports SPA + Desktop navigation in DEV_BYPASS mode', async () => {

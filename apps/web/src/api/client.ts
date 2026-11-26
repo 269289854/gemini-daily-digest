@@ -27,6 +27,9 @@ import type {
   NotificationChannelView,
   PagedResult,
   PaginationParams,
+  PlatformSettingsView,
+  PlatformXTestRequest,
+  PlatformXTestResult,
   RunStatsView,
   SourceDailyDigestView,
   SourceExportBundle,
@@ -34,6 +37,8 @@ import type {
   TriggerRunRequest,
   UpdateAiConfigCmd,
   UpdateChannelCmd,
+  UpdatePlatformSettingsCmd,
+  UpdatePlatformSettingsResult,
   UpdateScheduleCmd,
   UpdateSourceCmd,
   UpsertBookmarkCmd,
@@ -578,6 +583,32 @@ export function createApiClient(config: ApiClientConfig) {
       return request<DeliveryLogRecord>({
         method: 'POST',
         path: API_ROUTES.resendDelivery(deliveryId),
+      });
+    },
+
+    // Admin Platform Settings
+    getAdminPlatformSettings(): Promise<PlatformSettingsView> {
+      return request<PlatformSettingsView>({
+        method: 'GET',
+        path: API_ROUTES.ADMIN_PLATFORM,
+      });
+    },
+
+    updateAdminPlatformSettings(
+      cmd: UpdatePlatformSettingsCmd,
+    ): Promise<UpdatePlatformSettingsResult> {
+      return request<UpdatePlatformSettingsResult>({
+        method: 'PUT',
+        path: API_ROUTES.ADMIN_PLATFORM,
+        body: cmd,
+      });
+    },
+
+    testAdminPlatformX(req?: PlatformXTestRequest): Promise<PlatformXTestResult> {
+      return request<PlatformXTestResult>({
+        method: 'POST',
+        path: API_ROUTES.ADMIN_PLATFORM_X_TEST,
+        body: req ?? {},
       });
     },
   };

@@ -37,7 +37,8 @@ use crate::scheduler::composer::{
     compose_user_digest, resolve_user_ai_config_blocking, ComposeOutcome, ComposerDeps,
 };
 use crate::scheduler::poller::{
-    decode_source_payload_blocking, poll_canonical_source_once, SourcePollOutcome,
+    decode_source_payload_blocking, fetch_with_platform_x_support,
+    poll_canonical_source_once_with_platform_x, EffectivePlatformXConfig, SourcePollOutcome,
 };
 use crate::services::{
     AiModelsRequest, AiModelsResult, AiTestRequest, AiTestResult, ChannelTestResult,
@@ -98,7 +99,7 @@ impl ServerExecutionOrchestrator {
         source: &CanonicalSourceRecord,
         force_refresh: bool,
     ) -> Result<SourcePollOutcome, CoreError> {
-        poll_canonical_source_once(
+        poll_canonical_source_once_with_platform_x(
             &self.deps.repos,
             &self.deps.cache,
             &self.deps.cipher,
@@ -108,6 +109,7 @@ impl ServerExecutionOrchestrator {
             &self.deps.config.core.resources,
             source,
             force_refresh,
+            self.deps.config.platform_x_bridge_base_url.as_deref(),
         )
         .await
     }
@@ -494,15 +496,17 @@ impl ExecutionOrchestrator for ServerExecutionOrchestrator {
             category,
         };
 
-        match self
-            .deps
-            .collectors
-            .fetch(
-                &descriptor,
-                &ConditionalFetchHeaders::default(),
-                payload.credentials.as_ref(),
-            )
-            .await
+        match fetch_with_platform_x_support(
+            &self.deps.repos,
+            &self.deps.cipher,
+            &self.deps.collectors,
+            &descriptor,
+            &ConditionalFetchHeaders::default(),
+            payload.credentials.as_ref(),
+            None,
+            self.deps.config.platform_x_bridge_base_url.as_deref(),
+        )
+        .await
         {
             Ok(res) => {
                 let sample_titles = res
@@ -659,6 +663,24 @@ impl ExecutionOrchestrator for ServerExecutionOrchestrator {
             .runs
             .update_delivery_status(user_id, delivery_id, status, error_message, sent_at)
             .await
+    }
+
+    async fn test_platform_x_descriptor(
+        &self,
+        descriptor: SourceDescriptor,
+        platform_x: &EffectivePlatformXConfig,
+    ) -> Result<digest_core::traits::FetchResult, CoreError> {
+        fetch_with_platform_x_support(
+            &self.deps.repos,
+            &self.deps.cipher,
+            &self.deps.collectors,
+            &descriptor,
+            &ConditionalFetchHeaders::default(),
+            None,
+            Some(platform_x),
+            self.deps.config.platform_x_bridge_base_url.as_deref(),
+        )
+        .await
     }
 }
 

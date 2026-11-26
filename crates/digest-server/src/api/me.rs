@@ -6,6 +6,7 @@ use axum::Json;
 use digest_core::domain::AuthMode;
 use serde::Serialize;
 
+use crate::api::admin::compute_platform_x_ready;
 use crate::api::error::{ApiError, RequestId};
 use crate::auth::AuthenticatedUser;
 use crate::repo::{OnboardingFlags, UserRecord};
@@ -27,6 +28,7 @@ pub struct AuthConfigResponse {
 pub struct MeResponse {
     pub user: UserRecord,
     pub onboarding: OnboardingFlags,
+    pub platform_x_ready: bool,
 }
 
 /// `GET /api/v1/auth/config` — unauthenticated public OIDC configuration.
@@ -50,7 +52,14 @@ pub async fn get_me(
         .users
         .get_onboarding_flags(user.id)
         .await
-        .map_err(|err| ApiError::new(req_id.0, err))?;
+        .map_err(|err| ApiError::new(&req_id.0, err))?;
+    let platform_x_ready = compute_platform_x_ready(&state)
+        .await
+        .map_err(|err| ApiError::new(&req_id.0, err))?;
 
-    Ok(Json(MeResponse { user, onboarding }))
+    Ok(Json(MeResponse {
+        user,
+        onboarding,
+        platform_x_ready,
+    }))
 }

@@ -26,14 +26,16 @@ use super::dto::{
     CreateDeliveryLogCmd, CreateRunCmd, DailyDigestDetail, DailyDigestSummary, DeliveryLogRecord,
     DigestRunRecord, DigestRunView, FinishRunCmd, ItemSearchQuery, ItemView, NewCanonicalItem,
     NewUserItemMatch, NotificationChannelRecord, OnboardingFlags, PageRequest, PagedResult,
-    PendingAlertItem, RunStatsView, SaveDigestCmd, SourceDailyDigestView, SourceFetchStateUpdate,
-    SourceHealthStat, SubscribeSourceCmd, UpdateChannelRecord, UpdateScheduleCmd, UpdateSourceCmd,
-    UpsertAiConfigRecord, UpsertUserCmd, UpsertWatchlistRuleCmd, UserAiConfigRecord, UserRecord,
-    UserScheduleRecord, UserSourceRecord, UserSourceView, WatchlistRuleRecord,
+    PendingAlertItem, PlatformSettingsRecord, RunStatsView, SaveDigestCmd, SourceDailyDigestView,
+    SourceFetchStateUpdate, SourceHealthStat, SubscribeSourceCmd, UpdateChannelRecord,
+    UpdateScheduleCmd, UpdateSourceCmd, UpsertAiConfigRecord, UpsertPlatformSettingsRecord,
+    UpsertUserCmd, UpsertWatchlistRuleCmd, UserAiConfigRecord, UserRecord, UserScheduleRecord,
+    UserSourceRecord, UserSourceView, WatchlistRuleRecord,
 };
 use super::{DigestRepo, Repositories, RunRepo, SettingsRepo, SourceRepo, UserRepo};
 
 const MIGRATION_0001_SQL: &str = include_str!("../../migrations/0001_init.sql");
+const MIGRATION_0002_SQL: &str = include_str!("../../migrations/0002_platform_settings.sql");
 
 #[derive(Debug)]
 struct EmbeddedMigrations;
@@ -46,13 +48,22 @@ impl sqlx::migrate::MigrationSource<'static> for EmbeddedMigrations {
         Result<Vec<sqlx::migrate::Migration>, sqlx::error::BoxDynError>,
     > {
         Box::pin(async move {
-            Ok(vec![sqlx::migrate::Migration::new(
-                1,
-                std::borrow::Cow::Borrowed("init"),
-                sqlx::migrate::MigrationType::Simple,
-                std::borrow::Cow::Borrowed(MIGRATION_0001_SQL),
-                false,
-            )])
+            Ok(vec![
+                sqlx::migrate::Migration::new(
+                    1,
+                    std::borrow::Cow::Borrowed("init"),
+                    sqlx::migrate::MigrationType::Simple,
+                    std::borrow::Cow::Borrowed(MIGRATION_0001_SQL),
+                    false,
+                ),
+                sqlx::migrate::Migration::new(
+                    2,
+                    std::borrow::Cow::Borrowed("platform_settings"),
+                    sqlx::migrate::MigrationType::Simple,
+                    std::borrow::Cow::Borrowed(MIGRATION_0002_SQL),
+                    false,
+                ),
+            ])
         })
     }
 }
@@ -622,6 +633,7 @@ impl UserRepo for PostgresRepoStore {
             ON CONFLICT (oidc_sub) DO UPDATE SET
                 email = COALESCE(EXCLUDED.email, users.email),
                 display_name = COALESCE(EXCLUDED.display_name, users.display_name),
+                role = CASE WHEN EXCLUDED.role = 'admin' THEN 'admin' ELSE users.role END,
                 last_login_at = NOW()
             RETURNING id, oidc_sub, email, display_name, role, created_at, last_login_at
             "#,
@@ -2817,6 +2829,139 @@ impl SettingsRepo for PostgresRepoStore {
             return Err(CoreError::NotFound("watchlist rule not found".to_owned()));
         }
         Ok(())
+    }
+
+    async fn get_platform_settings(&self) -> Result<Option<PlatformSettingsRecord>, CoreError> {
+        let row = sqlx::query(
+            r#"
+            SELECT x_bridge_base_url, x_bridge_reload_url,
+                   x_bridge_reload_secret_enc, x_bridge_reload_secret_hint,
+                   x_auth_token_enc, x_auth_token_hint,
+                   x_bearer_token_enc, x_bearer_token_hint,
+                   updated_by, updated_at
+            FROM platform_settings
+            WHERE id = 1
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_pg_err)?;
+
+        row.as_ref()
+            .map(|r| {
+                Ok(PlatformSettingsRecord {
+                    x_bridge_base_url: r
+                        .try_get("x_bridge_base_url")
+                        .map_err(|e| col_err("x_bridge_base_url", e))?,
+                    x_bridge_reload_url: r
+                        .try_get("x_bridge_reload_url")
+                        .map_err(|e| col_err("x_bridge_reload_url", e))?,
+                    x_bridge_reload_secret_enc: r
+                        .try_get("x_bridge_reload_secret_enc")
+                        .map_err(|e| col_err("x_bridge_reload_secret_enc", e))?,
+                    x_bridge_reload_secret_hint: r
+                        .try_get("x_bridge_reload_secret_hint")
+                        .map_err(|e| col_err("x_bridge_reload_secret_hint", e))?,
+                    x_auth_token_enc: r
+                        .try_get("x_auth_token_enc")
+                        .map_err(|e| col_err("x_auth_token_enc", e))?,
+                    x_auth_token_hint: r
+                        .try_get("x_auth_token_hint")
+                        .map_err(|e| col_err("x_auth_token_hint", e))?,
+                    x_bearer_token_enc: r
+                        .try_get("x_bearer_token_enc")
+                        .map_err(|e| col_err("x_bearer_token_enc", e))?,
+                    x_bearer_token_hint: r
+                        .try_get("x_bearer_token_hint")
+                        .map_err(|e| col_err("x_bearer_token_hint", e))?,
+                    updated_by: r
+                        .try_get("updated_by")
+                        .map_err(|e| col_err("updated_by", e))?,
+                    updated_at: r
+                        .try_get::<Option<DateTime<Utc>>, _>("updated_at")
+                        .map_err(|e| col_err("updated_at", e))?,
+                })
+            })
+            .transpose()
+    }
+
+    async fn upsert_platform_settings(
+        &self,
+        cmd: UpsertPlatformSettingsRecord,
+    ) -> Result<PlatformSettingsRecord, CoreError> {
+        let row = sqlx::query(
+            r#"
+            INSERT INTO platform_settings (
+                id, x_bridge_base_url, x_bridge_reload_url,
+                x_bridge_reload_secret_enc, x_bridge_reload_secret_hint,
+                x_auth_token_enc, x_auth_token_hint,
+                x_bearer_token_enc, x_bearer_token_hint,
+                updated_by, updated_at
+            )
+            VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())
+            ON CONFLICT (id) DO UPDATE SET
+                x_bridge_base_url = EXCLUDED.x_bridge_base_url,
+                x_bridge_reload_url = EXCLUDED.x_bridge_reload_url,
+                x_bridge_reload_secret_enc = EXCLUDED.x_bridge_reload_secret_enc,
+                x_bridge_reload_secret_hint = EXCLUDED.x_bridge_reload_secret_hint,
+                x_auth_token_enc = EXCLUDED.x_auth_token_enc,
+                x_auth_token_hint = EXCLUDED.x_auth_token_hint,
+                x_bearer_token_enc = EXCLUDED.x_bearer_token_enc,
+                x_bearer_token_hint = EXCLUDED.x_bearer_token_hint,
+                updated_by = EXCLUDED.updated_by,
+                updated_at = NOW()
+            RETURNING x_bridge_base_url, x_bridge_reload_url,
+                      x_bridge_reload_secret_enc, x_bridge_reload_secret_hint,
+                      x_auth_token_enc, x_auth_token_hint,
+                      x_bearer_token_enc, x_bearer_token_hint,
+                      updated_by, updated_at
+            "#,
+        )
+        .bind(cmd.x_bridge_base_url.as_deref())
+        .bind(cmd.x_bridge_reload_url.as_deref())
+        .bind(cmd.x_bridge_reload_secret_enc.as_deref())
+        .bind(cmd.x_bridge_reload_secret_hint.as_deref())
+        .bind(cmd.x_auth_token_enc.as_deref())
+        .bind(cmd.x_auth_token_hint.as_deref())
+        .bind(cmd.x_bearer_token_enc.as_deref())
+        .bind(cmd.x_bearer_token_hint.as_deref())
+        .bind(cmd.updated_by)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_pg_err)?;
+
+        Ok(PlatformSettingsRecord {
+            x_bridge_base_url: row
+                .try_get("x_bridge_base_url")
+                .map_err(|e| col_err("x_bridge_base_url", e))?,
+            x_bridge_reload_url: row
+                .try_get("x_bridge_reload_url")
+                .map_err(|e| col_err("x_bridge_reload_url", e))?,
+            x_bridge_reload_secret_enc: row
+                .try_get("x_bridge_reload_secret_enc")
+                .map_err(|e| col_err("x_bridge_reload_secret_enc", e))?,
+            x_bridge_reload_secret_hint: row
+                .try_get("x_bridge_reload_secret_hint")
+                .map_err(|e| col_err("x_bridge_reload_secret_hint", e))?,
+            x_auth_token_enc: row
+                .try_get("x_auth_token_enc")
+                .map_err(|e| col_err("x_auth_token_enc", e))?,
+            x_auth_token_hint: row
+                .try_get("x_auth_token_hint")
+                .map_err(|e| col_err("x_auth_token_hint", e))?,
+            x_bearer_token_enc: row
+                .try_get("x_bearer_token_enc")
+                .map_err(|e| col_err("x_bearer_token_enc", e))?,
+            x_bearer_token_hint: row
+                .try_get("x_bearer_token_hint")
+                .map_err(|e| col_err("x_bearer_token_hint", e))?,
+            updated_by: row
+                .try_get("updated_by")
+                .map_err(|e| col_err("updated_by", e))?,
+            updated_at: row
+                .try_get::<Option<DateTime<Utc>>, _>("updated_at")
+                .map_err(|e| col_err("updated_at", e))?,
+        })
     }
 }
 

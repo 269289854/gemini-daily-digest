@@ -23,10 +23,11 @@ use super::dto::{
     CreateDeliveryLogCmd, CreateRunCmd, DailyDigestDetail, DailyDigestSummary, DeliveryLogRecord,
     DigestRunRecord, DigestRunView, FinishRunCmd, ItemSearchQuery, ItemView, NewCanonicalItem,
     NewUserItemMatch, NotificationChannelRecord, OnboardingFlags, PageRequest, PagedResult,
-    PendingAlertItem, RunStatsView, SaveDigestCmd, SourceDailyDigestView, SourceFetchStateUpdate,
-    SourceHealthStat, SubscribeSourceCmd, UpdateChannelRecord, UpdateScheduleCmd, UpdateSourceCmd,
-    UpsertAiConfigRecord, UpsertUserCmd, UpsertWatchlistRuleCmd, UserAiConfigRecord, UserRecord,
-    UserScheduleRecord, UserSourceRecord, UserSourceView, WatchlistRuleRecord,
+    PendingAlertItem, PlatformSettingsRecord, RunStatsView, SaveDigestCmd, SourceDailyDigestView,
+    SourceFetchStateUpdate, SourceHealthStat, SubscribeSourceCmd, UpdateChannelRecord,
+    UpdateScheduleCmd, UpdateSourceCmd, UpsertAiConfigRecord, UpsertPlatformSettingsRecord,
+    UpsertUserCmd, UpsertWatchlistRuleCmd, UserAiConfigRecord, UserRecord, UserScheduleRecord,
+    UserSourceRecord, UserSourceView, WatchlistRuleRecord,
 };
 use super::{DigestRepo, Repositories, RunRepo, SettingsRepo, SourceRepo, UserRepo};
 
@@ -111,6 +112,7 @@ struct InMemoryState {
     runs: HashMap<Uuid, DigestRunRecord>,
     deliveries: HashMap<Uuid, DeliveryLogRecord>,
     bookmarks: HashMap<(Uuid, Uuid), StoredBookmark>,
+    platform_settings: Option<PlatformSettingsRecord>,
 }
 
 /// Thread-safe in-memory repository store implementing all 5 repository traits
@@ -418,6 +420,13 @@ impl UserRepo for InMemoryRepoStore {
                 }
                 if cmd.display_name.is_some() {
                     existing.display_name = cmd.display_name;
+                }
+                if cmd
+                    .role
+                    .trim()
+                    .eq_ignore_ascii_case(crate::constants::ADMIN_USER_ROLE)
+                {
+                    existing.role = crate::constants::ADMIN_USER_ROLE.to_owned();
                 }
                 existing.last_login_at = Some(now);
             }
@@ -1864,6 +1873,32 @@ impl SettingsRepo for InMemoryRepoStore {
         }
         state.watchlist_rules.remove(&rule_id);
         Ok(())
+    }
+
+    async fn get_platform_settings(&self) -> Result<Option<PlatformSettingsRecord>, CoreError> {
+        let state = self.state.read().await;
+        Ok(state.platform_settings.clone())
+    }
+
+    async fn upsert_platform_settings(
+        &self,
+        cmd: UpsertPlatformSettingsRecord,
+    ) -> Result<PlatformSettingsRecord, CoreError> {
+        let mut state = self.state.write().await;
+        let rec = PlatformSettingsRecord {
+            x_bridge_base_url: cmd.x_bridge_base_url,
+            x_bridge_reload_url: cmd.x_bridge_reload_url,
+            x_bridge_reload_secret_enc: cmd.x_bridge_reload_secret_enc,
+            x_bridge_reload_secret_hint: cmd.x_bridge_reload_secret_hint,
+            x_auth_token_enc: cmd.x_auth_token_enc,
+            x_auth_token_hint: cmd.x_auth_token_hint,
+            x_bearer_token_enc: cmd.x_bearer_token_enc,
+            x_bearer_token_hint: cmd.x_bearer_token_hint,
+            updated_by: cmd.updated_by,
+            updated_at: Some(Utc::now()),
+        };
+        state.platform_settings = Some(rec.clone());
+        Ok(rec)
     }
 }
 

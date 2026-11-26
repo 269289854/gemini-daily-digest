@@ -241,6 +241,119 @@ pub struct UserAiConfigView {
 }
 
 // ============================================================================
+// Platform Settings (Admin-Managed Global Integrations)
+// ============================================================================
+
+/// Persisted singleton `platform_settings` row (encrypted secrets, redacted `Debug`).
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct PlatformSettingsRecord {
+    pub x_bridge_base_url: Option<String>,
+    pub x_bridge_reload_url: Option<String>,
+    pub x_bridge_reload_secret_enc: Option<String>,
+    pub x_bridge_reload_secret_hint: Option<String>,
+    pub x_auth_token_enc: Option<String>,
+    pub x_auth_token_hint: Option<String>,
+    pub x_bearer_token_enc: Option<String>,
+    pub x_bearer_token_hint: Option<String>,
+    pub updated_by: Option<Uuid>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl fmt::Debug for PlatformSettingsRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_reload = self
+            .x_bridge_reload_secret_enc
+            .as_ref()
+            .map(|_| SECRET_MASK_REDACTED_PLACEHOLDER);
+        let redacted_auth = self
+            .x_auth_token_enc
+            .as_ref()
+            .map(|_| SECRET_MASK_REDACTED_PLACEHOLDER);
+        let redacted_bearer = self
+            .x_bearer_token_enc
+            .as_ref()
+            .map(|_| SECRET_MASK_REDACTED_PLACEHOLDER);
+        f.debug_struct("PlatformSettingsRecord")
+            .field("x_bridge_base_url", &self.x_bridge_base_url)
+            .field("x_bridge_reload_url", &self.x_bridge_reload_url)
+            .field("x_bridge_reload_secret_enc", &redacted_reload)
+            .field(
+                "x_bridge_reload_secret_hint",
+                &self.x_bridge_reload_secret_hint,
+            )
+            .field("x_auth_token_enc", &redacted_auth)
+            .field("x_auth_token_hint", &self.x_auth_token_hint)
+            .field("x_bearer_token_enc", &redacted_bearer)
+            .field("x_bearer_token_hint", &self.x_bearer_token_hint)
+            .field("updated_by", &self.updated_by)
+            .field("updated_at", &self.updated_at)
+            .finish()
+    }
+}
+
+/// Command to upsert singleton `platform_settings` row (redacted `Debug`).
+#[derive(Clone, PartialEq, Eq, Default)]
+pub struct UpsertPlatformSettingsRecord {
+    pub x_bridge_base_url: Option<String>,
+    pub x_bridge_reload_url: Option<String>,
+    pub x_bridge_reload_secret_enc: Option<String>,
+    pub x_bridge_reload_secret_hint: Option<String>,
+    pub x_auth_token_enc: Option<String>,
+    pub x_auth_token_hint: Option<String>,
+    pub x_bearer_token_enc: Option<String>,
+    pub x_bearer_token_hint: Option<String>,
+    pub updated_by: Option<Uuid>,
+}
+
+impl fmt::Debug for UpsertPlatformSettingsRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted_reload = self
+            .x_bridge_reload_secret_enc
+            .as_ref()
+            .map(|_| SECRET_MASK_REDACTED_PLACEHOLDER);
+        let redacted_auth = self
+            .x_auth_token_enc
+            .as_ref()
+            .map(|_| SECRET_MASK_REDACTED_PLACEHOLDER);
+        let redacted_bearer = self
+            .x_bearer_token_enc
+            .as_ref()
+            .map(|_| SECRET_MASK_REDACTED_PLACEHOLDER);
+        f.debug_struct("UpsertPlatformSettingsRecord")
+            .field("x_bridge_base_url", &self.x_bridge_base_url)
+            .field("x_bridge_reload_url", &self.x_bridge_reload_url)
+            .field("x_bridge_reload_secret_enc", &redacted_reload)
+            .field(
+                "x_bridge_reload_secret_hint",
+                &self.x_bridge_reload_secret_hint,
+            )
+            .field("x_auth_token_enc", &redacted_auth)
+            .field("x_auth_token_hint", &self.x_auth_token_hint)
+            .field("x_bearer_token_enc", &redacted_bearer)
+            .field("x_bearer_token_hint", &self.x_bearer_token_hint)
+            .field("updated_by", &self.updated_by)
+            .finish()
+    }
+}
+
+/// Non-secret platform integration configuration view (`GET`/`PUT /api/v1/admin/platform`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlatformSettingsView {
+    pub x_bridge_base_url: Option<String>,
+    pub x_bridge_reload_url: Option<String>,
+    pub has_x_bridge_reload_secret: bool,
+    pub x_bridge_reload_secret_hint: Option<String>,
+    pub has_x_auth_token: bool,
+    pub x_auth_token_hint: Option<String>,
+    pub has_x_bearer_token: bool,
+    pub x_bearer_token_hint: Option<String>,
+    pub x_bridge_configured: bool,
+    pub x_integration_ready: bool,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+// ============================================================================
 // Canonical Sources & User Subscriptions
 // ============================================================================
 

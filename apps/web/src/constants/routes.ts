@@ -37,6 +37,8 @@ export const API_ROUTES = {
   RUNS_STATS: `${API_PREFIX}/runs/stats`,
   resendDelivery: (deliveryId: string) => `${API_PREFIX}/deliveries/${encodeURIComponent(deliveryId)}/resend`,
   EVENTS_STREAM: `${API_PREFIX}/events/stream`,
+  ADMIN_PLATFORM: `${API_PREFIX}/admin/platform`,
+  ADMIN_PLATFORM_X_TEST: `${API_PREFIX}/admin/platform/x/test`,
 } as const;
 
 export const APP_ROUTES = {

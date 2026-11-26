@@ -275,6 +275,19 @@ pub trait SettingsRepo: Send + Sync {
     ) -> Result<WatchlistRuleRecord, CoreError>;
 
     async fn delete_watchlist_rule(&self, user_id: Uuid, rule_id: Uuid) -> Result<(), CoreError>;
+
+    async fn get_platform_settings(&self) -> Result<Option<PlatformSettingsRecord>, CoreError> {
+        Ok(None)
+    }
+
+    async fn upsert_platform_settings(
+        &self,
+        _cmd: UpsertPlatformSettingsRecord,
+    ) -> Result<PlatformSettingsRecord, CoreError> {
+        Err(CoreError::InvalidConfig(
+            "platform settings persistence is not implemented on this store".to_owned(),
+        ))
+    }
 }
 
 /// Bundled trait-object repositories injected into `AppState` and scheduler services.

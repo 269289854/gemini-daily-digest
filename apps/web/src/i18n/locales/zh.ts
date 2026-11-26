@@ -257,6 +257,7 @@ export const zhMessages: Record<TranslationKey, string> = {
   'settings.tabChannels': '邮件与消息渠道',
   'settings.tabSchedule': '定时与突发告警',
   'settings.tabMcp': '桌面端与 MCP 接入',
+  'settings.tabPlatform': '平台配置（管理员）',
 
   // AI Config Panel
   'ai.loading': '正在加载 AI 配置...',
@@ -304,6 +305,13 @@ export const zhMessages: Record<TranslationKey, string> = {
   'sourceSettings.importing': '导入中...',
   'sourceSettings.importPreset': '一键导入预设包',
   'sourceSettings.importedPresetMsg': '已成功导入 {count} 个预设监控源。',
+  'sourceSettings.xPlatformReadyBanner':
+    '平台级 X（Twitter）桥接已就绪：未单独填写凭证的 X 账号与搜索源将自动通过平台共享桥接抓取。',
+  'sourceSettings.xMissingCredsBanner':
+    'X 账号模板在导入后默认处于「已暂停」状态，直到填写单源 X API 凭证或由管理员在「平台配置」中完成设置。',
+  'sourceSettings.xBridgeBadge': '已接入平台 X 桥接',
+  'sourceSettings.xPausedNeedsSetup':
+    '已暂停：请配置单源 X 凭证，或联系管理员在「平台配置」中设置平台 X Token。',
   'sourceSettings.addTitle': '新增监控源 / 账号',
   'sourceSettings.addDesc':
     '公开源全局仅抓取一次并在多用户间共享；携带个人凭证或 X 模板的源自动隔离为 user_private 私有作用域。',
@@ -535,4 +543,44 @@ export const zhMessages: Record<TranslationKey, string> = {
   'enum.priority.normal': '普通',
   'enum.priority.high': '高优',
   'enum.priority.urgent': '紧急',
+
+  // Platform Admin Panel
+  'platformAdmin.loading': '正在加载平台配置...',
+  'platformAdmin.title': '平台级 X（Twitter）统一接入配置',
+  'platformAdmin.subtitle':
+    '由管理员一次配置 X 会话 auth_token 与 RSSHub 桥接，保存后免重启立即热生效，所有 X 监控源无需逐个填写密钥即可抓取。',
+  'platformAdmin.statusBridgeReady': 'X 桥接已连接',
+  'platformAdmin.statusTokenSaved': '已配置 X auth_token',
+  'platformAdmin.statusNoAuthToken': '尚未保存 auth_token',
+  'platformAdmin.statusBearerSaved': '已配置官方 Bearer Token',
+  'platformAdmin.authTokenLabel': 'X 会话 auth_token（支持直接粘贴整段浏览器 Cookie）',
+  'platformAdmin.authTokenPlaceholder':
+    '粘贴 auth_token 值（多个账号可用英文逗号分隔，或直接粘贴浏览器复制出的整段 cookie 请求头）',
+  'platformAdmin.authTokenHint':
+    '使用 AES-256-GCM 加密存入 PostgreSQL，绝不回传明文。若粘贴了完整 Cookie 请求头，后端会自动提取其中的 auth_token=。',
+  'platformAdmin.clearAuthToken': '清空已保存的 X auth_token',
+  'platformAdmin.bridgeUrlLabel': 'X 桥接服务地址（RSSHub Base URL）',
+  'platformAdmin.bridgeUrlPlaceholder': 'http://rsshub:1200',
+  'platformAdmin.bridgeUrlHint':
+    '内网或 HTTPS RSSHub 地址，自动将 X 账号与搜索源映射到 /twitter/user 与 /twitter/keyword。',
+  'platformAdmin.advancedSummary': '高级选项：热重载通知接口与官方 X API 兜底密钥',
+  'platformAdmin.reloadUrlLabel': '桥接服务热重载 Webhook URL',
+  'platformAdmin.reloadUrlPlaceholder': 'http://rsshub:1201/internal/twitter-token',
+  'platformAdmin.reloadSecretLabel': '热重载鉴权密钥（选填，不回显旧密钥）',
+  'platformAdmin.reloadSecretPlaceholder': '留空则保留现有密钥',
+  'platformAdmin.clearReloadSecret': '清空热重载密钥',
+  'platformAdmin.bearerTokenLabel': '官方 X API v2 Bearer Token 兜底（选填）',
+  'platformAdmin.bearerTokenPlaceholder': '留空则保留现有官方 Bearer Token',
+  'platformAdmin.clearBearerToken': '清空已保存的官方 Bearer Token',
+  'platformAdmin.saveBtn': '保存并热生效（无需重启）',
+  'platformAdmin.savingBtn': '保存并应用中...',
+  'platformAdmin.savedSimple': '平台 X 配置已保存。',
+  'platformAdmin.savedReloaded': '平台 X 配置已保存并完成桥接服务热重载（{message}）。',
+  'platformAdmin.reloadWarning': '数据库已保存，但热重载提示：{message}',
+  'platformAdmin.testHandleLabel': '测试抓取的 X 账号',
+  'platformAdmin.testHandlePlaceholder': 'GoogleDeepMind',
+  'platformAdmin.testBtn': '测试抓取 X 动态',
+  'platformAdmin.testingBtn': '抓取中...',
+  'platformAdmin.testPassed': 'X 抓取成功（共 {count} 条，耗时 {ms} ms，模式：{mode}）',
+  'platformAdmin.testFailed': 'X 抓取失败（耗时 {ms} ms，模式：{mode}）',
 };

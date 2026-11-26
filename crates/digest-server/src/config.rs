@@ -14,7 +14,11 @@ use digest_core::error::CoreError;
 use sha2::{Digest, Sha256};
 use url::Url;
 
-use crate::constants::{DEFAULT_OIDC_SCOPES, DEV_BYPASS_FALLBACK_CIPHER_LABEL};
+use crate::constants::{
+    DEFAULT_ADMIN_OIDC_GROUPS, DEFAULT_OIDC_SCOPES, DEV_BYPASS_FALLBACK_CIPHER_LABEL,
+    ENV_ADMIN_EMAILS, ENV_ADMIN_OIDC_GROUPS, ENV_ADMIN_OIDC_SUBS, ENV_PLATFORM_X_BRIDGE_BASE_URL,
+    ENV_PLATFORM_X_BRIDGE_RELOAD_SECRET, ENV_PLATFORM_X_BRIDGE_RELOAD_URL,
+};
 
 /// Top-level server configuration loaded from environment variables.
 #[derive(Clone, PartialEq, Default)]
@@ -25,6 +29,12 @@ pub struct ServerConfig {
     pub oidc_client_id: Option<String>,
     pub oidc_audience: Option<String>,
     pub app_master_key_b64: Option<String>,
+    pub admin_emails: Vec<String>,
+    pub admin_oidc_subs: Vec<String>,
+    pub admin_oidc_groups: Vec<String>,
+    pub platform_x_bridge_base_url: Option<String>,
+    pub platform_x_bridge_reload_url: Option<String>,
+    pub platform_x_bridge_reload_secret: Option<String>,
 }
 
 impl fmt::Debug for ServerConfig {
@@ -37,6 +47,10 @@ impl fmt::Debug for ServerConfig {
             .app_master_key_b64
             .as_ref()
             .map(|_| SECRET_MASK_REDACTED_PLACEHOLDER);
+        let redacted_bridge_secret = self
+            .platform_x_bridge_reload_secret
+            .as_ref()
+            .map(|_| SECRET_MASK_REDACTED_PLACEHOLDER);
         f.debug_struct("ServerConfig")
             .field("core", &self.core)
             .field("database_url", &redacted_db)
@@ -44,6 +58,18 @@ impl fmt::Debug for ServerConfig {
             .field("oidc_client_id", &self.oidc_client_id)
             .field("oidc_audience", &self.oidc_audience)
             .field("app_master_key_b64", &redacted_key)
+            .field("admin_emails", &self.admin_emails)
+            .field("admin_oidc_subs", &self.admin_oidc_subs)
+            .field("admin_oidc_groups", &self.admin_oidc_groups)
+            .field(
+                "platform_x_bridge_base_url",
+                &self.platform_x_bridge_base_url,
+            )
+            .field(
+                "platform_x_bridge_reload_url",
+                &self.platform_x_bridge_reload_url,
+            )
+            .field("platform_x_bridge_reload_secret", &redacted_bridge_secret)
             .finish()
     }
 }
@@ -59,10 +85,37 @@ fn read_optional_env(key: &str) -> Option<String> {
     })
 }
 
+fn read_csv_env(key: &str, lowercase: bool) -> Vec<String> {
+    read_optional_env(key)
+        .map(|raw| {
+            raw.split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| {
+                    if lowercase {
+                        s.to_ascii_lowercase()
+                    } else {
+                        s.to_owned()
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 impl ServerConfig {
     /// Loads `ServerConfig` from environment variables.
     pub fn from_env() -> Result<Self, CoreError> {
         let core = AppConfig::from_env()?;
+        let env_groups = read_csv_env(ENV_ADMIN_OIDC_GROUPS, true);
+        let admin_oidc_groups = if env_groups.is_empty() {
+            DEFAULT_ADMIN_OIDC_GROUPS
+                .iter()
+                .map(|g| g.to_ascii_lowercase())
+                .collect()
+        } else {
+            env_groups
+        };
         Ok(Self {
             core,
             database_url: read_optional_env(ENV_DATABASE_URL),
@@ -70,6 +123,12 @@ impl ServerConfig {
             oidc_client_id: read_optional_env(ENV_OIDC_CLIENT_ID),
             oidc_audience: read_optional_env(ENV_OIDC_AUDIENCE),
             app_master_key_b64: read_optional_env(ENV_APP_MASTER_KEY_B64),
+            admin_emails: read_csv_env(ENV_ADMIN_EMAILS, true),
+            admin_oidc_subs: read_csv_env(ENV_ADMIN_OIDC_SUBS, false),
+            admin_oidc_groups,
+            platform_x_bridge_base_url: read_optional_env(ENV_PLATFORM_X_BRIDGE_BASE_URL),
+            platform_x_bridge_reload_url: read_optional_env(ENV_PLATFORM_X_BRIDGE_RELOAD_URL),
+            platform_x_bridge_reload_secret: read_optional_env(ENV_PLATFORM_X_BRIDGE_RELOAD_SECRET),
         })
     }
 
@@ -194,11 +253,14 @@ mod tests {
             oidc_client_id: Some("digest-client".to_owned()),
             oidc_audience: None,
             app_master_key_b64: Some(sample_master_key_b64()),
+            platform_x_bridge_reload_secret: Some("super-reload-secret-value".to_owned()),
+            ..ServerConfig::default()
         };
 
         let rendered = format!("{cfg:?}");
         assert!(!rendered.contains("supersecret"));
         assert!(!rendered.contains(&sample_master_key_b64()));
+        assert!(!rendered.contains("super-reload-secret-value"));
         assert!(rendered.contains(SECRET_MASK_REDACTED_PLACEHOLDER));
         assert!(rendered.contains("digest-client"));
     }

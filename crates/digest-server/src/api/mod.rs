@@ -1,5 +1,6 @@
 //! HTTP REST and SSE router tree wiring all Section 5 endpoints.
 
+pub mod admin;
 pub mod bookmarks;
 pub mod digests;
 pub mod error;
@@ -23,15 +24,16 @@ use tower_http::services::{ServeDir, ServeFile};
 use crate::api::error::{ApiError, RequestId};
 
 use crate::constants::{
-    SUBROUTE_AUTH_CONFIG, SUBROUTE_BOOKMARKS, SUBROUTE_BOOKMARK_BY_ITEM, SUBROUTE_DELIVERY_RESEND,
-    SUBROUTE_DIGESTS, SUBROUTE_DIGEST_BY_DATE, SUBROUTE_DIGEST_MARKDOWN, SUBROUTE_EVENTS_STREAM,
-    SUBROUTE_ITEMS, SUBROUTE_ME, SUBROUTE_RUNS, SUBROUTE_RUNS_STATS, SUBROUTE_RUNS_TRIGGER,
-    SUBROUTE_SETTINGS_AI, SUBROUTE_SETTINGS_AI_MODELS, SUBROUTE_SETTINGS_AI_TEST,
-    SUBROUTE_SETTINGS_CHANNELS, SUBROUTE_SETTINGS_CHANNEL_BY_ID, SUBROUTE_SETTINGS_CHANNEL_TEST,
-    SUBROUTE_SETTINGS_SCHEDULE, SUBROUTE_SETTINGS_SOURCES, SUBROUTE_SETTINGS_SOURCES_EXPORT,
-    SUBROUTE_SETTINGS_SOURCES_IMPORT, SUBROUTE_SETTINGS_SOURCES_IMPORT_PRESET,
-    SUBROUTE_SETTINGS_SOURCE_BY_ID, SUBROUTE_SETTINGS_SOURCE_TEST, SUBROUTE_SETTINGS_WATCHLIST,
-    SUBROUTE_SETTINGS_WATCHLIST_BY_ID, SUBROUTE_SOURCE_DIGESTS, SUBROUTE_SOURCE_ITEMS,
+    SUBROUTE_ADMIN_PLATFORM, SUBROUTE_ADMIN_PLATFORM_X_TEST, SUBROUTE_AUTH_CONFIG,
+    SUBROUTE_BOOKMARKS, SUBROUTE_BOOKMARK_BY_ITEM, SUBROUTE_DELIVERY_RESEND, SUBROUTE_DIGESTS,
+    SUBROUTE_DIGEST_BY_DATE, SUBROUTE_DIGEST_MARKDOWN, SUBROUTE_EVENTS_STREAM, SUBROUTE_ITEMS,
+    SUBROUTE_ME, SUBROUTE_RUNS, SUBROUTE_RUNS_STATS, SUBROUTE_RUNS_TRIGGER, SUBROUTE_SETTINGS_AI,
+    SUBROUTE_SETTINGS_AI_MODELS, SUBROUTE_SETTINGS_AI_TEST, SUBROUTE_SETTINGS_CHANNELS,
+    SUBROUTE_SETTINGS_CHANNEL_BY_ID, SUBROUTE_SETTINGS_CHANNEL_TEST, SUBROUTE_SETTINGS_SCHEDULE,
+    SUBROUTE_SETTINGS_SOURCES, SUBROUTE_SETTINGS_SOURCES_EXPORT, SUBROUTE_SETTINGS_SOURCES_IMPORT,
+    SUBROUTE_SETTINGS_SOURCES_IMPORT_PRESET, SUBROUTE_SETTINGS_SOURCE_BY_ID,
+    SUBROUTE_SETTINGS_SOURCE_TEST, SUBROUTE_SETTINGS_WATCHLIST, SUBROUTE_SETTINGS_WATCHLIST_BY_ID,
+    SUBROUTE_SOURCE_DIGESTS, SUBROUTE_SOURCE_ITEMS,
 };
 use crate::state::AppState;
 
@@ -127,6 +129,11 @@ pub fn router(state: AppState) -> Router {
         .route(SUBROUTE_RUNS_STATS, get(runs::get_run_stats))
         .route(SUBROUTE_DELIVERY_RESEND, post(runs::resend_delivery))
         .route(SUBROUTE_EVENTS_STREAM, get(events::stream_events))
+        .route(
+            SUBROUTE_ADMIN_PLATFORM,
+            get(admin::get_platform_settings).put(admin::update_platform_settings),
+        )
+        .route(SUBROUTE_ADMIN_PLATFORM_X_TEST, post(admin::test_platform_x))
         .route("/", any(api_not_found))
         .fallback(api_not_found);
 
@@ -204,6 +211,7 @@ mod tests {
         items: Mutex<Vec<ItemView>>,
         runs: Mutex<Vec<DigestRunView>>,
         deliveries: Mutex<Vec<DeliveryLogRecord>>,
+        platform_settings: Mutex<Option<PlatformSettingsRecord>>,
         cipher: Option<Arc<EnvelopeCipher>>,
     }
 
@@ -873,6 +881,30 @@ mod tests {
                 return Err(CoreError::NotFound("watchlist rule not found".to_owned()));
             }
             Ok(())
+        }
+
+        async fn get_platform_settings(&self) -> Result<Option<PlatformSettingsRecord>, CoreError> {
+            Ok(self.platform_settings.lock().await.clone())
+        }
+
+        async fn upsert_platform_settings(
+            &self,
+            cmd: UpsertPlatformSettingsRecord,
+        ) -> Result<PlatformSettingsRecord, CoreError> {
+            let rec = PlatformSettingsRecord {
+                x_bridge_base_url: cmd.x_bridge_base_url,
+                x_bridge_reload_url: cmd.x_bridge_reload_url,
+                x_bridge_reload_secret_enc: cmd.x_bridge_reload_secret_enc,
+                x_bridge_reload_secret_hint: cmd.x_bridge_reload_secret_hint,
+                x_auth_token_enc: cmd.x_auth_token_enc,
+                x_auth_token_hint: cmd.x_auth_token_hint,
+                x_bearer_token_enc: cmd.x_bearer_token_enc,
+                x_bearer_token_hint: cmd.x_bearer_token_hint,
+                updated_by: cmd.updated_by,
+                updated_at: Some(Utc::now()),
+            };
+            *self.platform_settings.lock().await = Some(rec.clone());
+            Ok(rec)
         }
     }
 
@@ -1735,5 +1767,143 @@ mod tests {
                 "traversal leaked outside file for {traversal}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn admin_platform_endpoints_require_admin_and_hot_reload_bridge() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let reload_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/internal/twitter-token"))
+            .and(header("authorization", "Bearer reload-secret-123"))
+            .and(body_json(serde_json::json!({
+                "authToken": "fresh_x_token_value"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true
+            })))
+            .expect(1)
+            .mount(&reload_server)
+            .await;
+
+        let (mut state, store, _sse) = build_test_state();
+        let mut cfg = (*state.config).clone();
+        cfg.core.ssrf_allowlist_hosts = vec!["127.0.0.1".to_owned(), "localhost".to_owned()];
+        state.config = Arc::new(cfg);
+        state.ssrf = SsrfGuard::from_config(&state.config.core);
+        let app = router(state);
+
+        // First authenticate as dev_bypass (which is admin), verify GET succeeds
+        let get_admin = app
+            .clone()
+            .oneshot(loopback_req(
+                http::Method::GET,
+                "/api/v1/admin/platform",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(get_admin.status(), StatusCode::OK);
+        let initial_view = read_json(get_admin).await;
+        assert_eq!(initial_view["hasXAuthToken"], false);
+
+        // Verify X presets are paused when platform X is unconfigured
+        let preset_paused_resp = app
+            .clone()
+            .oneshot(loopback_req(
+                http::Method::POST,
+                "/api/v1/settings/sources/import-preset",
+                Some(serde_json::json!({ "includeXTemplates": true })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(preset_paused_resp.status(), StatusCode::OK);
+        let preset_paused_json = read_json(preset_paused_resp).await;
+        let x_paused: Vec<_> = preset_paused_json["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["sourceType"] == "x_account" || s["sourceType"] == "x_search")
+            .collect();
+        assert_eq!(x_paused.len(), 3);
+        assert!(x_paused.iter().all(|s| s["enabled"] == false));
+
+        // Update platform X settings using a full pasted Cookie header -> extracts auth_token and hot-reloads bridge
+        let put_resp = app
+            .clone()
+            .oneshot(loopback_req(
+                http::Method::PUT,
+                "/api/v1/admin/platform",
+                Some(serde_json::json!({
+                    "xBridgeBaseUrl": reload_server.uri(),
+                    "xBridgeReloadUrl": format!("{}/internal/twitter-token", reload_server.uri()),
+                    "xBridgeReloadSecret": "reload-secret-123",
+                    "xAuthToken": "guest_id=v1%3A1; auth_token=fresh_x_token_value; ct0=csrf_token;"
+                })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(put_resp.status(), StatusCode::OK);
+        let put_json = read_json(put_resp).await;
+        assert_eq!(put_json["bridgeReloaded"], true);
+        assert_eq!(put_json["settings"]["hasXAuthToken"], true);
+        assert_eq!(put_json["settings"]["xBridgeConfigured"], true);
+        assert_eq!(put_json["settings"]["xIntegrationReady"], true);
+        assert!(!put_json.to_string().contains("fresh_x_token_value"));
+        assert!(!put_json.to_string().contains("reload-secret-123"));
+
+        // Clear earlier paused subscriptions and re-import presets: X templates are now enabled automatically
+        store.sources.lock().await.clear();
+        let preset_ready_resp = app
+            .clone()
+            .oneshot(loopback_req(
+                http::Method::POST,
+                "/api/v1/settings/sources/import-preset",
+                Some(serde_json::json!({ "includeXTemplates": true })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(preset_ready_resp.status(), StatusCode::OK);
+        let preset_ready_json = read_json(preset_ready_resp).await;
+        assert!(preset_ready_json["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["sourceType"] == "x_account" || s["sourceType"] == "x_search")
+            .all(|s| s["enabled"] == true));
+
+        // Live platform X test works
+        let test_resp = app
+            .clone()
+            .oneshot(loopback_req(
+                http::Method::POST,
+                "/api/v1/admin/platform/x/test",
+                Some(serde_json::json!({ "handle": "@GoogleDeepMind" })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(test_resp.status(), StatusCode::OK);
+        let test_json = read_json(test_resp).await;
+        assert_eq!(test_json["mode"], "rsshub_bridge");
+        assert_eq!(test_json["handle"], "GoogleDeepMind");
+
+        // Non-admin user receives 403 Forbidden
+        {
+            let mut users = store.users.lock().await;
+            for u in users.values_mut() {
+                u.role = "member".to_owned();
+            }
+        }
+        let forbidden_resp = app
+            .oneshot(loopback_req(
+                http::Method::GET,
+                "/api/v1/admin/platform",
+                None,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(forbidden_resp.status(), StatusCode::FORBIDDEN);
     }
 }

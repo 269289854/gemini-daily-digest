@@ -78,6 +78,52 @@ export interface OnboardingFlags {
 export interface MeResponse {
   user: UserRecord;
   onboarding: OnboardingFlags;
+  platformXReady?: boolean;
+}
+
+export interface PlatformSettingsView {
+  xBridgeBaseUrl: string | null;
+  xBridgeReloadUrl: string | null;
+  hasXBridgeReloadSecret: boolean;
+  xBridgeReloadSecretHint: string | null;
+  hasXAuthToken: boolean;
+  xAuthTokenHint: string | null;
+  hasXBearerToken: boolean;
+  xBearerTokenHint: string | null;
+  xBridgeConfigured: boolean;
+  xIntegrationReady: boolean;
+  updatedAt: string | null;
+}
+
+export interface UpdatePlatformSettingsCmd {
+  xBridgeBaseUrl?: string | null;
+  xBridgeReloadUrl?: string | null;
+  xBridgeReloadSecret?: string | null;
+  clearXBridgeReloadSecret?: boolean;
+  xAuthToken?: string | null;
+  clearXAuthToken?: boolean;
+  xBearerToken?: string | null;
+  clearXBearerToken?: boolean;
+}
+
+export interface UpdatePlatformSettingsResult {
+  settings: PlatformSettingsView;
+  bridgeReloaded: boolean;
+  bridgeMessage: string | null;
+}
+
+export interface PlatformXTestRequest {
+  handle?: string | null;
+}
+
+export interface PlatformXTestResult {
+  ok: boolean;
+  mode: string;
+  handle: string;
+  itemsFetched: number;
+  sampleTitles: string[];
+  latencyMs: number;
+  message: string;
 }
 
 // ============================================================================

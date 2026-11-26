@@ -267,6 +267,7 @@ export const enMessages = {
   'settings.tabChannels': 'Notification Channels',
   'settings.tabSchedule': 'Schedule & Watchlist',
   'settings.tabMcp': 'Desktop & MCP',
+  'settings.tabPlatform': 'Platform (Admin)',
 
   // AI Config Panel
   'ai.loading': 'Loading AI configuration...',
@@ -316,6 +317,13 @@ export const enMessages = {
   'sourceSettings.importing': 'Importing...',
   'sourceSettings.importPreset': 'Import Preset Pack',
   'sourceSettings.importedPresetMsg': 'Imported {count} preset sources.',
+  'sourceSettings.xPlatformReadyBanner':
+    'Platform X integration is active. Your X account and X search sources will collect via the shared bridge unless overridden by per-source credentials.',
+  'sourceSettings.xMissingCredsBanner':
+    'X templates are imported as Paused until either per-source X API credentials are entered or an administrator configures the Platform X integration.',
+  'sourceSettings.xBridgeBadge': 'Uses Platform X Bridge',
+  'sourceSettings.xPausedNeedsSetup':
+    'Paused: add per-source X credentials or ask an admin to configure Platform X settings.',
   'sourceSettings.addTitle': 'Add Source or Account',
   'sourceSettings.addDesc':
     'Public feeds are fetched once and shared across subscribers. Sources with credentials or X templates are isolated under user_private scope.',
@@ -556,6 +564,46 @@ export const enMessages = {
   'enum.priority.normal': 'Normal',
   'enum.priority.high': 'High',
   'enum.priority.urgent': 'Urgent',
+
+  // Platform Admin Panel
+  'platformAdmin.loading': 'Loading platform settings...',
+  'platformAdmin.title': 'Platform X (Twitter) Integration',
+  'platformAdmin.subtitle':
+    'Configure a global X session auth_token or RSSHub bridge once for all X sources. Updates take effect immediately with zero service restarts.',
+  'platformAdmin.statusBridgeReady': 'X Bridge Ready',
+  'platformAdmin.statusTokenSaved': 'X auth_token Saved',
+  'platformAdmin.statusNoAuthToken': 'No auth_token Stored',
+  'platformAdmin.statusBearerSaved': 'Official Bearer Token Saved',
+  'platformAdmin.authTokenLabel': 'X Session auth_token (or paste raw Cookie header)',
+  'platformAdmin.authTokenPlaceholder':
+    'Paste the auth_token cookie value (or comma-separated tokens, or the entire Cookie header)',
+  'platformAdmin.authTokenHint':
+    'Stored AES-256-GCM encrypted in PostgreSQL and never returned in plaintext. If you paste a full Cookie header, auth_token= is extracted automatically.',
+  'platformAdmin.clearAuthToken': 'Clear stored X auth_token',
+  'platformAdmin.bridgeUrlLabel': 'X Bridge (RSSHub) Base URL',
+  'platformAdmin.bridgeUrlPlaceholder': 'http://rsshub:1200',
+  'platformAdmin.bridgeUrlHint':
+    'Internal or HTTPS RSSHub URL used for /twitter/user/:handle and /twitter/keyword/:query feeds.',
+  'platformAdmin.advancedSummary': 'Advanced: Hot-Reload Webhook & Official X API Fallback',
+  'platformAdmin.reloadUrlLabel': 'Bridge Hot-Reload Webhook URL',
+  'platformAdmin.reloadUrlPlaceholder': 'http://rsshub:1201/internal/twitter-token',
+  'platformAdmin.reloadSecretLabel': 'Reload Bearer Secret (optional, never prefilled)',
+  'platformAdmin.reloadSecretPlaceholder': 'Leave blank to keep existing reload secret',
+  'platformAdmin.clearReloadSecret': 'Clear stored reload secret',
+  'platformAdmin.bearerTokenLabel': 'Fallback Official X API v2 Bearer Token (optional)',
+  'platformAdmin.bearerTokenPlaceholder': 'Leave blank to keep existing Bearer token',
+  'platformAdmin.clearBearerToken': 'Clear stored official Bearer token',
+  'platformAdmin.saveBtn': 'Save & Apply (No Restart)',
+  'platformAdmin.savingBtn': 'Saving & Applying...',
+  'platformAdmin.savedSimple': 'Platform X settings saved.',
+  'platformAdmin.savedReloaded': 'Platform X settings saved and bridge hot-reloaded ({message}).',
+  'platformAdmin.reloadWarning': 'Settings saved in DB, but bridge hot-reload reported: {message}',
+  'platformAdmin.testHandleLabel': 'Test X Handle',
+  'platformAdmin.testHandlePlaceholder': 'GoogleDeepMind',
+  'platformAdmin.testBtn': 'Test X Fetch',
+  'platformAdmin.testingBtn': 'Fetching...',
+  'platformAdmin.testPassed': 'X Fetch Passed ({count} items, {ms} ms, mode: {mode})',
+  'platformAdmin.testFailed': 'X Fetch Failed ({ms} ms, mode: {mode})',
 } as const;
 
 export type TranslationKey = keyof typeof enMessages;

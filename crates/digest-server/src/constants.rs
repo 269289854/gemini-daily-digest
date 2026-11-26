@@ -32,6 +32,8 @@ pub const SUBROUTE_RUNS: &str = "/runs";
 pub const SUBROUTE_RUNS_STATS: &str = "/runs/stats";
 pub const SUBROUTE_DELIVERY_RESEND: &str = "/deliveries/{id}/resend";
 pub const SUBROUTE_EVENTS_STREAM: &str = "/events/stream";
+pub const SUBROUTE_ADMIN_PLATFORM: &str = "/admin/platform";
+pub const SUBROUTE_ADMIN_PLATFORM_X_TEST: &str = "/admin/platform/x/test";
 
 /// Default OIDC scopes advertised by `/api/v1/auth/config`.
 pub const DEFAULT_OIDC_SCOPES: &[&str] = &["openid", "profile", "email"];
@@ -39,8 +41,23 @@ pub const DEFAULT_OIDC_SCOPES: &[&str] = &["openid", "profile", "email"];
 /// Standard OIDC discovery document path suffix.
 pub const OIDC_WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";
 
-/// Default role assigned to newly provisioned users.
+/// Default and administrator role identifiers persisted in `users.role`.
 pub const DEFAULT_USER_ROLE: &str = "member";
+pub const ADMIN_USER_ROLE: &str = "admin";
+
+/// Default OIDC group names promoted to `admin` when present in token `groups` claims.
+pub const DEFAULT_ADMIN_OIDC_GROUPS: &[&str] = &["authentik Admins", "admin"];
+
+/// Environment variable names for admin role mapping and platform X integration defaults.
+pub const ENV_ADMIN_EMAILS: &str = "ADMIN_EMAILS";
+pub const ENV_ADMIN_OIDC_SUBS: &str = "ADMIN_OIDC_SUBS";
+pub const ENV_ADMIN_OIDC_GROUPS: &str = "ADMIN_OIDC_GROUPS";
+pub const ENV_PLATFORM_X_BRIDGE_BASE_URL: &str = "PLATFORM_X_BRIDGE_BASE_URL";
+pub const ENV_PLATFORM_X_BRIDGE_RELOAD_URL: &str = "PLATFORM_X_BRIDGE_RELOAD_URL";
+pub const ENV_PLATFORM_X_BRIDGE_RELOAD_SECRET: &str = "PLATFORM_X_BRIDGE_RELOAD_SECRET";
+
+/// HTTP timeout (seconds) for internal bridge hot-reload webhook calls.
+pub const BRIDGE_RELOAD_HTTP_TIMEOUT_SECS: u64 = 25;
 
 /// Deterministic local development user identity for loopback-only `dev_bypass`.
 pub const DEV_BYPASS_OIDC_SUB: &str = "dev-bypass-local";

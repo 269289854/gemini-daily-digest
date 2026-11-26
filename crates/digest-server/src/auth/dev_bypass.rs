@@ -7,7 +7,7 @@ use std::net::SocketAddr;
 use digest_core::error::CoreError;
 
 use crate::constants::{
-    DEFAULT_USER_ROLE, DEV_BYPASS_DISPLAY_NAME, DEV_BYPASS_EMAIL, DEV_BYPASS_OIDC_SUB,
+    ADMIN_USER_ROLE, DEV_BYPASS_DISPLAY_NAME, DEV_BYPASS_EMAIL, DEV_BYPASS_OIDC_SUB,
 };
 use crate::repo::{UpsertUserCmd, UserRecord, UserRepo};
 
@@ -36,7 +36,7 @@ pub async fn authenticate_dev_bypass(
             oidc_sub: DEV_BYPASS_OIDC_SUB.to_owned(),
             email: Some(DEV_BYPASS_EMAIL.to_owned()),
             display_name: Some(DEV_BYPASS_DISPLAY_NAME.to_owned()),
-            role: DEFAULT_USER_ROLE.to_owned(),
+            role: ADMIN_USER_ROLE.to_owned(),
         })
         .await
 }

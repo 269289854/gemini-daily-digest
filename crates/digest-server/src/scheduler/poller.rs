@@ -8,12 +8,15 @@ use chrono::{Duration as ChronoDuration, Utc};
 use digest_core::cache::CacheCoordinator;
 use digest_core::collectors::{next_failure_backoff, CollectorRegistry};
 use digest_core::config::{CollectorTuning, ResourceLimitsTuning};
+use digest_core::constants::SECRET_MASK_REDACTED_PLACEHOLDER;
 use digest_core::crypto::EnvelopeCipher;
-use digest_core::domain::{FetchOutcome, SourceScope};
+use digest_core::domain::{FetchOutcome, SourceScope, SourceType};
 use digest_core::error::CoreError;
 use digest_core::pipeline::ItemProcessingPipeline;
 use digest_core::presets::find_preset_by_key;
-use digest_core::traits::{ConditionalFetchHeaders, SourceDescriptor, StructuredItemProcessor};
+use digest_core::traits::{
+    ConditionalFetchHeaders, FetchResult, SourceDescriptor, StructuredItemProcessor,
+};
 use futures::stream::{self, StreamExt};
 use uuid::Uuid;
 
@@ -24,6 +27,213 @@ use crate::repo::{
 };
 
 const DEFAULT_SOURCE_CATEGORY: &str = "General";
+
+/// Effective platform-wide X integration settings used as fallback for X sources.
+#[derive(Clone, Default)]
+pub struct EffectivePlatformXConfig {
+    pub bridge_base_url: Option<String>,
+    pub bearer_token_enc: Option<String>,
+}
+
+impl std::fmt::Debug for EffectivePlatformXConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let redacted = self
+            .bearer_token_enc
+            .as_ref()
+            .map(|_| SECRET_MASK_REDACTED_PLACEHOLDER);
+        f.debug_struct("EffectivePlatformXConfig")
+            .field("bridge_base_url", &self.bridge_base_url)
+            .field("bearer_token_enc", &redacted)
+            .finish()
+    }
+}
+
+impl EffectivePlatformXConfig {
+    /// Constructs an `EffectivePlatformXConfig` trimming empty strings to `None`.
+    #[must_use]
+    pub fn from_parts(bridge_base_url: Option<String>, bearer_token_enc: Option<String>) -> Self {
+        let normalize =
+            |opt: Option<String>| opt.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty());
+        Self {
+            bridge_base_url: normalize(bridge_base_url),
+            bearer_token_enc: normalize(bearer_token_enc),
+        }
+    }
+}
+
+/// Redacts any secret strings before surfacing upstream error messages.
+#[must_use]
+pub fn sanitize_x_platform_error<'a>(
+    raw: &str,
+    secrets: impl IntoIterator<Item = &'a str>,
+) -> String {
+    let mut sanitized = raw.to_owned();
+    for secret in secrets {
+        let trimmed = secret.trim();
+        if !trimmed.is_empty() {
+            sanitized = sanitized.replace(trimmed, SECRET_MASK_REDACTED_PLACEHOLDER);
+        }
+    }
+    sanitized
+}
+
+/// Resolves effective platform X config from `platform_settings` DB row + optional env fallback.
+pub async fn resolve_effective_platform_x_config(
+    repos: &Repositories,
+    env_bridge_base_url: Option<&str>,
+) -> Result<EffectivePlatformXConfig, CoreError> {
+    let stored = repos.settings.get_platform_settings().await?;
+    let bridge = stored
+        .as_ref()
+        .and_then(|s| s.x_bridge_base_url.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            env_bridge_base_url
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        });
+    let bearer_enc = stored.and_then(|s| s.x_bearer_token_enc);
+    Ok(EffectivePlatformXConfig::from_parts(bridge, bearer_enc))
+}
+
+fn has_per_source_bearer_token(credentials: Option<&serde_json::Value>) -> bool {
+    let Some(obj) = credentials.and_then(|v| v.as_object()) else {
+        return false;
+    };
+    ["bearer_token", "bearerToken", "access_token", "token"]
+        .iter()
+        .any(|key| {
+            obj.get(*key)
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| !s.trim().is_empty())
+        })
+}
+
+fn extract_x_handle_for_bridge(handle_or_url: &str) -> Result<String, CoreError> {
+    let trimmed = handle_or_url.trim();
+    if trimmed.is_empty() {
+        return Err(CoreError::InvalidInput(
+            "X account handle must not be empty".to_owned(),
+        ));
+    }
+    let handle = if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        let parsed = url::Url::parse(trimmed)
+            .map_err(|err| CoreError::InvalidInput(format!("invalid X account URL: {err}")))?;
+        parsed
+            .path_segments()
+            .and_then(|mut segs| segs.find(|s| !s.is_empty()))
+            .unwrap_or("")
+            .trim_start_matches('@')
+            .to_owned()
+    } else {
+        trimmed.trim_start_matches('@').to_owned()
+    };
+
+    if handle.is_empty()
+        || !handle
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        return Err(CoreError::InvalidInput(format!(
+            "invalid X username handle: {trimmed}"
+        )));
+    }
+    Ok(handle)
+}
+
+fn build_bridge_rss_url(
+    base_url: &str,
+    source_type: SourceType,
+    handle_or_url: &str,
+) -> Result<String, CoreError> {
+    let base = base_url.trim().trim_end_matches('/');
+    match source_type {
+        SourceType::XAccount => {
+            let handle = extract_x_handle_for_bridge(handle_or_url)?;
+            Ok(format!("{base}/twitter/user/{handle}"))
+        }
+        SourceType::XSearch => {
+            let query = handle_or_url.trim();
+            if query.is_empty() {
+                return Err(CoreError::InvalidInput(
+                    "X search query must not be empty".to_owned(),
+                ));
+            }
+            let encoded: String = url::form_urlencoded::byte_serialize(query.as_bytes())
+                .map(|chunk| chunk.replace('+', "%20"))
+                .collect();
+            Ok(format!("{base}/twitter/keyword/{encoded}"))
+        }
+        other => Err(CoreError::InvalidInput(format!(
+            "source type {other} is not an X source"
+        ))),
+    }
+}
+
+/// Fetches a `SourceDescriptor`, routing X sources with missing per-source bearer tokens
+/// through the admin-configured X Bridge (RSSHub) or platform bearer token when present.
+#[allow(clippy::too_many_arguments)]
+pub async fn fetch_with_platform_x_support(
+    repos: &Repositories,
+    cipher: &Arc<EnvelopeCipher>,
+    collectors: &Arc<CollectorRegistry>,
+    descriptor: &SourceDescriptor,
+    conditional: &ConditionalFetchHeaders,
+    per_source_credentials: Option<&serde_json::Value>,
+    platform_override: Option<&EffectivePlatformXConfig>,
+    env_bridge_base_url: Option<&str>,
+) -> Result<FetchResult, CoreError> {
+    if !matches!(
+        descriptor.source_type,
+        SourceType::XAccount | SourceType::XSearch
+    ) || has_per_source_bearer_token(per_source_credentials)
+    {
+        return collectors
+            .fetch(descriptor, conditional, per_source_credentials)
+            .await;
+    }
+
+    let effective = match platform_override {
+        Some(cfg) => cfg.clone(),
+        None => resolve_effective_platform_x_config(repos, env_bridge_base_url).await?,
+    };
+
+    if let Some(ref bridge_base) = effective.bridge_base_url {
+        let rss_url = build_bridge_rss_url(
+            bridge_base,
+            descriptor.source_type,
+            &descriptor.handle_or_url,
+        )?;
+        let bridge_descriptor = SourceDescriptor {
+            source_type: SourceType::Rss,
+            handle_or_url: rss_url,
+            ..descriptor.clone()
+        };
+        return collectors
+            .fetch(&bridge_descriptor, conditional, None)
+            .await;
+    }
+
+    if let Some(enc_token) = effective.bearer_token_enc {
+        let cipher_cloned = Arc::clone(cipher);
+        let token = tokio::task::spawn_blocking(move || cipher_cloned.decrypt(&enc_token))
+            .await
+            .map_err(|err| {
+                CoreError::Internal(format!("platform X token decrypt failed: {err}"))
+            })??;
+        let creds = serde_json::json!({ "bearer_token": token });
+        return collectors
+            .fetch(descriptor, conditional, Some(&creds))
+            .await;
+    }
+
+    Err(CoreError::Unauthorized(
+        "X source requires per-source API credentials or administrator-configured platform X integration".to_owned(),
+    ))
+}
 
 /// Outcome of polling a single canonical source.
 #[derive(Debug, Clone)]
@@ -78,6 +288,31 @@ pub async fn run_poller_tick(
     collector_tuning: &CollectorTuning,
     limits: &ResourceLimitsTuning,
 ) -> Result<PollerTickReport, CoreError> {
+    run_poller_tick_with_platform_x(
+        repos,
+        cache,
+        cipher,
+        collectors,
+        pipeline,
+        collector_tuning,
+        limits,
+        None,
+    )
+    .await
+}
+
+/// Executes one Layer 1 poller tick with an optional env-level X Bridge base URL fallback.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_poller_tick_with_platform_x(
+    repos: &Repositories,
+    cache: &Arc<dyn CacheCoordinator>,
+    cipher: &Arc<EnvelopeCipher>,
+    collectors: &Arc<CollectorRegistry>,
+    pipeline: &Arc<ItemProcessingPipeline>,
+    collector_tuning: &CollectorTuning,
+    limits: &ResourceLimitsTuning,
+    env_bridge_base_url: Option<&str>,
+) -> Result<PollerTickReport, CoreError> {
     let now = Utc::now();
     let due_sources = repos
         .sources
@@ -88,6 +323,7 @@ pub async fn run_poller_tick(
         return Ok(PollerTickReport::default());
     }
 
+    let env_bridge_owned = env_bridge_base_url.map(str::to_owned);
     let concurrency = limits.global_fetch_concurrency.get().max(1);
     let outcomes: Vec<SourcePollOutcome> = stream::iter(due_sources)
         .map(|source| {
@@ -98,8 +334,9 @@ pub async fn run_poller_tick(
             let pipeline = Arc::clone(pipeline);
             let collector_tuning = collector_tuning.clone();
             let limits = limits.clone();
+            let env_bridge = env_bridge_owned.clone();
             async move {
-                match poll_canonical_source_once(
+                match poll_canonical_source_once_with_platform_x(
                     &repos,
                     &cache,
                     &cipher,
@@ -109,6 +346,7 @@ pub async fn run_poller_tick(
                     &limits,
                     &source,
                     false,
+                    env_bridge.as_deref(),
                 )
                 .await
                 {
@@ -165,6 +403,35 @@ pub async fn poll_canonical_source_once(
     limits: &ResourceLimitsTuning,
     source: &CanonicalSourceRecord,
     force_refresh: bool,
+) -> Result<SourcePollOutcome, CoreError> {
+    poll_canonical_source_once_with_platform_x(
+        repos,
+        cache,
+        cipher,
+        collectors,
+        pipeline,
+        collector_tuning,
+        limits,
+        source,
+        force_refresh,
+        None,
+    )
+    .await
+}
+
+/// Polls a single canonical source with an optional env-level X Bridge base URL fallback.
+#[allow(clippy::too_many_arguments)]
+pub async fn poll_canonical_source_once_with_platform_x(
+    repos: &Repositories,
+    cache: &Arc<dyn CacheCoordinator>,
+    cipher: &Arc<EnvelopeCipher>,
+    collectors: &Arc<CollectorRegistry>,
+    pipeline: &Arc<ItemProcessingPipeline>,
+    collector_tuning: &CollectorTuning,
+    limits: &ResourceLimitsTuning,
+    source: &CanonicalSourceRecord,
+    force_refresh: bool,
+    env_bridge_base_url: Option<&str>,
 ) -> Result<SourcePollOutcome, CoreError> {
     let cache_key = format!("source:{}", source.id);
 
@@ -226,6 +493,7 @@ pub async fn poll_canonical_source_once(
         source,
         &cache_key,
         force_refresh,
+        env_bridge_base_url,
     )
     .await;
 
@@ -252,6 +520,7 @@ async fn poll_locked_source(
     source: &CanonicalSourceRecord,
     cache_key: &str,
     force_refresh: bool,
+    env_bridge_base_url: Option<&str>,
 ) -> Result<SourcePollOutcome, CoreError> {
     if !force_refresh && cache.is_fresh(cache_key).await.unwrap_or(false) {
         return Ok(SourcePollOutcome {
@@ -295,9 +564,17 @@ async fn poll_locked_source(
         None
     };
 
-    let fetch_res = collectors
-        .fetch(&descriptor, &conditional, credentials)
-        .await;
+    let fetch_res = fetch_with_platform_x_support(
+        repos,
+        cipher,
+        collectors,
+        &descriptor,
+        &conditional,
+        credentials,
+        None,
+        env_bridge_base_url,
+    )
+    .await;
     let now = Utc::now();
     let freshness_chrono = ChronoDuration::from_std(limits.source_freshness_ttl)
         .unwrap_or_else(|_| ChronoDuration::seconds(900));
@@ -458,7 +735,7 @@ mod tests {
     use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
     use super::*;
-    use crate::repo::{encode_source_config, SourceRepo, SubscribeSourceCmd};
+    use crate::repo::{encode_source_config, SettingsRepo, SourceRepo, SubscribeSourceCmd};
     use crate::scheduler::test_support::MockRepos;
 
     fn test_pipeline() -> Arc<ItemProcessingPipeline> {
@@ -789,5 +1066,141 @@ mod tests {
         let next_poll = src.next_poll_at.unwrap();
         // 1st failure backoff is 1 hour (3600s).
         assert!(next_poll >= before + ChronoDuration::minutes(59));
+    }
+
+    #[tokio::test]
+    async fn platform_x_bridge_routes_x_account_and_search_while_per_source_token_takes_precedence()
+    {
+        let bridge = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/twitter/user/GoogleDeepMind"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"<?xml version="1.0"?><rss version="2.0"><channel><title>@GoogleDeepMind</title><item><guid>x1</guid><title>Gemini bridge post</title><link>https://x.com/GoogleDeepMind/status/1</link></item></channel></rss>"#,
+            ))
+            .mount(&bridge)
+            .await;
+
+        Mock::given(method("GET"))
+            .and(path("/twitter/keyword/Gemini%20API"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"<?xml version="1.0"?><rss version="2.0"><channel><title>Search</title><item><guid>xs1</guid><title>Gemini API tweet</title><link>https://x.com/user/status/2</link></item></channel></rss>"#,
+            ))
+            .mount(&bridge)
+            .await;
+
+        let x_api = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/2/users/by/username/CustomHandle"))
+            .and(header("authorization", "Bearer per-source-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": { "id": "99", "username": "CustomHandle" }
+            })))
+            .mount(&x_api)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/2/users/99/tweets"))
+            .and(header("authorization", "Bearer per-source-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "data": [{ "id": "88", "text": "Direct X API tweet", "created_at": "2026-11-26T00:00:00Z" }]
+            })))
+            .mount(&x_api)
+            .await;
+
+        let mock = MockRepos::new();
+        let cipher = test_cipher();
+        mock.settings
+            .upsert_platform_settings(crate::repo::UpsertPlatformSettingsRecord {
+                x_bridge_base_url: Some(bridge.uri()),
+                ..crate::repo::UpsertPlatformSettingsRecord::default()
+            })
+            .await
+            .unwrap();
+
+        let tuning = CollectorTuning {
+            max_retry_attempts: NonZeroUsize::new(1).unwrap(),
+            initial_backoff: Duration::from_millis(5),
+            ..CollectorTuning::default()
+        };
+        let limits = ResourceLimitsTuning::default();
+        let client = shared_http_client(None, &tuning).unwrap();
+        let ssrf = SsrfGuard::new(vec!["127.0.0.1".to_owned(), "localhost".to_owned()]);
+        let ctx = CollectorContext::new(client, ssrf, tuning, limits)
+            .with_x_api_base_url(format!("{}/2", x_api.uri()));
+        let collectors = Arc::new(CollectorRegistry::new(ctx));
+        let repos = mock.repositories();
+
+        let acc_desc = SourceDescriptor {
+            id: Uuid::new_v4(),
+            source_type: SourceType::XAccount,
+            scope: SourceScope::UserPrivate,
+            canonical_key: "x_account:@GoogleDeepMind".to_owned(),
+            name: "GoogleDeepMind".to_owned(),
+            handle_or_url: "@GoogleDeepMind".to_owned(),
+            category: "Social".to_owned(),
+        };
+        let acc_res = fetch_with_platform_x_support(
+            &repos,
+            &cipher,
+            &collectors,
+            &acc_desc,
+            &ConditionalFetchHeaders::default(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(acc_res.items.len(), 1);
+        assert_eq!(acc_res.items[0].title, "Gemini bridge post");
+
+        let search_desc = SourceDescriptor {
+            id: Uuid::new_v4(),
+            source_type: SourceType::XSearch,
+            scope: SourceScope::UserPrivate,
+            canonical_key: "x_search:Gemini API".to_owned(),
+            name: "X Search".to_owned(),
+            handle_or_url: "Gemini API".to_owned(),
+            category: "Social".to_owned(),
+        };
+        let search_res = fetch_with_platform_x_support(
+            &repos,
+            &cipher,
+            &collectors,
+            &search_desc,
+            &ConditionalFetchHeaders::default(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(search_res.items.len(), 1);
+        assert_eq!(search_res.items[0].title, "Gemini API tweet");
+
+        // Per-source bearerToken overrides platform bridge
+        let custom_desc = SourceDescriptor {
+            id: Uuid::new_v4(),
+            source_type: SourceType::XAccount,
+            scope: SourceScope::UserPrivate,
+            canonical_key: "x_account:@CustomHandle".to_owned(),
+            name: "CustomHandle".to_owned(),
+            handle_or_url: "@CustomHandle".to_owned(),
+            category: "Social".to_owned(),
+        };
+        let per_source_creds = serde_json::json!({ "bearerToken": "per-source-token" });
+        let custom_res = fetch_with_platform_x_support(
+            &repos,
+            &cipher,
+            &collectors,
+            &custom_desc,
+            &ConditionalFetchHeaders::default(),
+            Some(&per_source_creds),
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(custom_res.items.len(), 1);
+        assert_eq!(custom_res.items[0].title, "Direct X API tweet");
     }
 }

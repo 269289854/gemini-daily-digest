@@ -29,6 +29,7 @@ export interface AuthContextValue {
   authConfig: AuthConfigResponse | null;
   user: UserRecord | null;
   onboarding: OnboardingFlags | null;
+  platformXReady: boolean;
   accessToken: string | null;
   isAuthenticated: boolean;
   isLoading: boolean;
@@ -101,6 +102,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
   const [authConfig, setAuthConfig] = useState<AuthConfigResponse | null>(null);
   const [user, setUser] = useState<UserRecord | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingFlags | null>(null);
+  const [platformXReady, setPlatformXReady] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -141,6 +143,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     setAccessToken(null);
     setUser(null);
     setOnboarding(null);
+    setPlatformXReady(false);
     setIsAuthenticated(false);
     syncDesktopSession(serverBaseUrlRef.current, null, authConfigRef.current?.authMode ?? null);
   }, [syncDesktopSession]);
@@ -160,6 +163,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     const me = await api.getMe();
     setUser(me.user);
     setOnboarding(me.onboarding);
+    setPlatformXReady(Boolean(me.platformXReady));
     setIsAuthenticated(true);
     setError(null);
   }, [api]);
@@ -185,6 +189,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
           }
           setUser(me.user);
           setOnboarding(me.onboarding);
+          setPlatformXReady(Boolean(me.platformXReady));
           setIsAuthenticated(true);
           syncDesktopSession(serverBaseUrlRef.current, null, config.authMode);
           setIsLoading(false);
@@ -219,6 +224,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         }
         setUser(me.user);
         setOnboarding(me.onboarding);
+        setPlatformXReady(Boolean(me.platformXReady));
         setIsAuthenticated(true);
         syncDesktopSession(serverBaseUrlRef.current, currentSession.accessToken, config.authMode);
       } catch (err) {
@@ -330,6 +336,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         const me = await api.getMe();
         setUser(me.user);
         setOnboarding(me.onboarding);
+        setPlatformXReady(Boolean(me.platformXReady));
         setIsAuthenticated(true);
         setError(null);
         syncDesktopSession(serverBaseUrlRef.current, saved.accessToken, config.authMode);
@@ -418,6 +425,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     setAccessToken(null);
     setUser(null);
     setOnboarding(null);
+    setPlatformXReady(false);
     setIsAuthenticated(false);
     setError(null);
     syncDesktopSession(serverBaseUrlRef.current, null, authConfigRef.current?.authMode ?? null);
@@ -441,6 +449,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
       authConfig,
       user,
       onboarding,
+      platformXReady,
       accessToken,
       isAuthenticated,
       isLoading,
@@ -457,6 +466,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
       authConfig,
       user,
       onboarding,
+      platformXReady,
       accessToken,
       isAuthenticated,
       isLoading,
@@ -472,6 +482,10 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+}
+
+export function useOptionalAuth(): AuthContextValue | null {
+  return useContext(AuthContext);
 }
 
 export function useAuth(): AuthContextValue {

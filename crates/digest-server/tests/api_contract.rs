@@ -110,6 +110,7 @@ fn build_test_app(
         oidc_client_id,
         oidc_audience: None,
         app_master_key_b64: Some(STANDARD.encode([0x33u8; CRYPTO_KEY_BYTE_LEN])),
+        ..ServerConfig::default()
     });
 
     let cipher = Arc::new(config.build_cipher().unwrap());

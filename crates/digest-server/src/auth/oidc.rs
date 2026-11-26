@@ -16,8 +16,8 @@ use url::Url;
 
 use crate::config::ServerConfig;
 use crate::constants::{
-    DEFAULT_USER_ROLE, JWKS_CACHE_TTL_SECS, JWT_LEEWAY_SECS, OIDC_HTTP_TIMEOUT_SECS,
-    OIDC_JWT_ALGORITHM, OIDC_WELL_KNOWN_SUFFIX,
+    ADMIN_USER_ROLE, DEFAULT_USER_ROLE, JWKS_CACHE_TTL_SECS, JWT_LEEWAY_SECS,
+    OIDC_HTTP_TIMEOUT_SECS, OIDC_JWT_ALGORITHM, OIDC_WELL_KNOWN_SUFFIX,
 };
 use crate::repo::{UpsertUserCmd, UserRecord, UserRepo};
 use crate::services::AuthIdentity;
@@ -36,6 +36,10 @@ struct OidcClaims {
     name: Option<String>,
     #[serde(default)]
     preferred_username: Option<String>,
+    #[serde(default)]
+    groups: Vec<String>,
+    #[serde(default)]
+    is_superuser: Option<bool>,
 }
 
 struct CachedJwks {
@@ -153,12 +157,39 @@ impl OidcValidator {
             .or(claims.preferred_username)
             .map(|n| n.trim().to_owned())
             .filter(|n| !n.is_empty());
+        let is_admin = claims.is_superuser == Some(true)
+            || claims.groups.iter().any(|group| {
+                let g = group.trim().to_ascii_lowercase();
+                !g.is_empty()
+                    && self
+                        .config
+                        .admin_oidc_groups
+                        .iter()
+                        .any(|configured| configured == &g)
+            })
+            || email.as_ref().is_some_and(|e| {
+                let lower = e.to_ascii_lowercase();
+                self.config
+                    .admin_emails
+                    .iter()
+                    .any(|configured| configured == &lower)
+            })
+            || self
+                .config
+                .admin_oidc_subs
+                .iter()
+                .any(|configured| configured == sub);
+        let role = if is_admin {
+            ADMIN_USER_ROLE.to_owned()
+        } else {
+            DEFAULT_USER_ROLE.to_owned()
+        };
 
         Ok(AuthIdentity {
             oidc_sub: sub.to_owned(),
             email,
             display_name,
-            role: DEFAULT_USER_ROLE.to_owned(),
+            role,
         })
     }
 
@@ -397,7 +428,7 @@ mod tests {
 
     use crate::repo::OnboardingFlags;
 
-    #[derive(Serialize)]
+    #[derive(Clone, Serialize)]
     struct TestClaims {
         sub: String,
         iss: String,
@@ -406,6 +437,10 @@ mod tests {
         nbf: usize,
         email: Option<String>,
         name: Option<String>,
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        groups: Vec<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_superuser: Option<bool>,
     }
 
     fn build_rsa_keypair_and_jwk(kid: &str) -> (EncodingKey, serde_json::Value) {
@@ -469,6 +504,8 @@ mod tests {
             oidc_client_id: Some("digest-web".to_owned()),
             oidc_audience: Some("digest-api".to_owned()),
             app_master_key_b64: None,
+            admin_oidc_groups: vec!["authentik admins".to_owned(), "admin".to_owned()],
+            ..ServerConfig::default()
         })
     }
 
@@ -496,6 +533,8 @@ mod tests {
             nbf: now - 10,
             email: Some("alice@example.com".to_owned()),
             name: Some("Alice".to_owned()),
+            groups: Vec::new(),
+            is_superuser: None,
         };
         let valid_jwt = jsonwebtoken::encode(&header, &valid_claims, &encoding_key).unwrap();
 
@@ -508,6 +547,7 @@ mod tests {
         assert_eq!(user.oidc_sub, "oidc-user-42");
         assert_eq!(user.email.as_deref(), Some("alice@example.com"));
         assert_eq!(user.display_name.as_deref(), Some("Alice"));
+        assert_eq!(user.role, "member");
 
         // Second call uses cached JWKS (wiremock expect(1) verifies no second HTTP fetch!)
         let user_cached = validator.authenticate(&users, &headers).await.unwrap();
@@ -522,6 +562,8 @@ mod tests {
             nbf: now.saturating_sub(600),
             email: None,
             name: None,
+            groups: Vec::new(),
+            is_superuser: None,
         };
         let expired_jwt = jsonwebtoken::encode(&header, &expired_claims, &encoding_key).unwrap();
         assert!(matches!(
@@ -538,6 +580,8 @@ mod tests {
             nbf: now - 10,
             email: None,
             name: None,
+            groups: Vec::new(),
+            is_superuser: None,
         };
         let wrong_aud_jwt =
             jsonwebtoken::encode(&header, &wrong_aud_claims, &encoding_key).unwrap();
@@ -557,6 +601,8 @@ mod tests {
                 nbf: now - 10,
                 email: None,
                 name: None,
+                groups: Vec::new(),
+                is_superuser: None,
             })
             .unwrap(),
         );
@@ -623,12 +669,14 @@ mod tests {
         let now = Utc::now().timestamp() as usize;
         let claims = TestClaims {
             sub: "user-rotated".to_owned(),
-            iss: issuer,
+            iss: issuer.clone(),
             aud: "digest-api".to_owned(),
             exp: now + 600,
             nbf: now - 10,
             email: None,
             name: None,
+            groups: Vec::new(),
+            is_superuser: None,
         };
 
         let mut h1 = Header::new(Algorithm::RS256);
@@ -646,6 +694,64 @@ mod tests {
         assert_eq!(
             validator.verify_token(&jwt2).await.unwrap().oidc_sub,
             "user-rotated"
+        );
+    }
+
+    #[tokio::test]
+    async fn oidc_promotes_admin_via_groups_superuser_or_configured_email() {
+        let server = MockServer::start().await;
+        let (key, jwk) = build_rsa_keypair_and_jwk("key-admin");
+        mount_oidc_server(&server, jwk, 1).await;
+
+        let issuer = format!("{}/issuer", server.uri());
+        let mut base = (*test_oidc_config(issuer.clone())).clone();
+        base.admin_emails = vec!["boss@example.com".to_owned()];
+        let validator = OidcValidator::new(Arc::new(base), reqwest::Client::new());
+
+        let now = Utc::now().timestamp() as usize;
+        let mut header = Header::new(Algorithm::RS256);
+        header.kid = Some("key-admin".to_owned());
+
+        let group_claims = TestClaims {
+            sub: "sub-group".to_owned(),
+            iss: issuer.clone(),
+            aud: "digest-api".to_owned(),
+            exp: now + 600,
+            nbf: now - 10,
+            email: None,
+            name: None,
+            groups: vec!["authentik Admins".to_owned()],
+            is_superuser: None,
+        };
+        let jwt_group = jsonwebtoken::encode(&header, &group_claims, &key).unwrap();
+        assert_eq!(
+            validator.verify_token(&jwt_group).await.unwrap().role,
+            ADMIN_USER_ROLE
+        );
+
+        let super_claims = TestClaims {
+            sub: "sub-super".to_owned(),
+            is_superuser: Some(true),
+            groups: Vec::new(),
+            ..group_claims.clone()
+        };
+        let jwt_super = jsonwebtoken::encode(&header, &super_claims, &key).unwrap();
+        assert_eq!(
+            validator.verify_token(&jwt_super).await.unwrap().role,
+            ADMIN_USER_ROLE
+        );
+
+        let email_claims = TestClaims {
+            sub: "sub-email".to_owned(),
+            email: Some("BOSS@example.com".to_owned()),
+            is_superuser: None,
+            groups: Vec::new(),
+            ..group_claims
+        };
+        let jwt_email = jsonwebtoken::encode(&header, &email_claims, &key).unwrap();
+        assert_eq!(
+            validator.verify_token(&jwt_email).await.unwrap().role,
+            ADMIN_USER_ROLE
         );
     }
 }

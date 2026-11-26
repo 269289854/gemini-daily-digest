@@ -128,6 +128,7 @@ fn build_oidc_harness(issuer: String) -> TestHarness {
         oidc_client_id: Some("digest-iso-client".to_owned()),
         oidc_audience: None,
         app_master_key_b64: Some(STANDARD.encode([0x55u8; CRYPTO_KEY_BYTE_LEN])),
+        ..ServerConfig::default()
     });
 
     let cipher = Arc::new(config.build_cipher().unwrap());

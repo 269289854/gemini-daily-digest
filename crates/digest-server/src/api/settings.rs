@@ -28,6 +28,7 @@ use http::StatusCode;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::api::admin::compute_platform_x_ready;
 use crate::api::error::{parse_uuid, ApiError, ApiJson, OptionalApiJson, RequestId};
 use crate::auth::AuthenticatedUser;
 use crate::constants::SOURCE_EXPORT_FORMAT_VERSION;
@@ -716,8 +717,13 @@ pub async fn import_preset_sources(
             .collect(),
     };
 
+    let platform_x_ready = compute_platform_x_ready(&state)
+        .await
+        .map_err(|err| ApiError::new(&req_id.0, err))?;
+
     let mut imported = Vec::with_capacity(presets.len());
     for preset in presets {
+        let enabled = !preset.requires_user_credentials || platform_x_ready;
         let cmd = SubscribeSourceCmd {
             source_type: preset.source_type,
             scope: preset.scope,
@@ -727,7 +733,7 @@ pub async fn import_preset_sources(
             category: preset.category,
             handle_or_url: preset.handle_or_url,
             config_json_enc: None,
-            enabled: true,
+            enabled,
         };
         let view = state
             .repos

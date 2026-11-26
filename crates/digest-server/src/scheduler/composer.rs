@@ -42,7 +42,8 @@ use crate::repo::{
     WatchlistRuleRecord,
 };
 use crate::scheduler::poller::{
-    canonical_source_from_user_source, poll_canonical_source_once, SourcePollOutcome,
+    canonical_source_from_user_source, poll_canonical_source_once_with_platform_x,
+    SourcePollOutcome,
 };
 use crate::services::SsePublisher;
 use crate::sse_hub::{digest_ready_envelope, run_progress_envelope};
@@ -285,9 +286,10 @@ async fn compose_inner(
             let pipeline = Arc::clone(&deps.pipeline);
             let collector_tuning = deps.config.core.collector.clone();
             let limits = deps.config.core.resources.clone();
+            let env_bridge = deps.config.platform_x_bridge_base_url.clone();
             async move {
                 let canonical = canonical_source_from_user_source(&user_src);
-                match poll_canonical_source_once(
+                match poll_canonical_source_once_with_platform_x(
                     &repos,
                     &cache,
                     &cipher,
@@ -297,6 +299,7 @@ async fn compose_inner(
                     &limits,
                     &canonical,
                     force_refresh,
+                    env_bridge.as_deref(),
                 )
                 .await
                 {

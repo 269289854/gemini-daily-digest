@@ -25,7 +25,8 @@ use crate::scheduler::composer::{
     dispatch_selected_channels, match_and_score_batches, ComposerDeps,
 };
 use crate::scheduler::poller::{
-    canonical_source_from_user_source, poll_canonical_source_once, SourcePollOutcome,
+    canonical_source_from_user_source, poll_canonical_source_once_with_platform_x,
+    SourcePollOutcome,
 };
 use crate::sse_hub::alert_triggered_envelope;
 
@@ -119,9 +120,10 @@ async fn scan_user_alerts(
             let pipeline = Arc::clone(&deps.pipeline);
             let collector_tuning = deps.config.core.collector.clone();
             let limits = deps.config.core.resources.clone();
+            let env_bridge = deps.config.platform_x_bridge_base_url.clone();
             async move {
                 let canonical = canonical_source_from_user_source(&user_src);
-                match poll_canonical_source_once(
+                match poll_canonical_source_once_with_platform_x(
                     &repos,
                     &cache,
                     &cipher,
@@ -131,6 +133,7 @@ async fn scan_user_alerts(
                     &limits,
                     &canonical,
                     false,
+                    env_bridge.as_deref(),
                 )
                 .await
                 {

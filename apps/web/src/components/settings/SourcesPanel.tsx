@@ -12,6 +12,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { ApiError, type ApiClient } from '../../api/client';
+import { useOptionalAuth } from '../../auth/AuthProvider';
 import { type TranslateFn, useI18n } from '../../i18n';
 import type {
   CreateSourceCmd,
@@ -25,6 +26,7 @@ import { FetchOutcome, SourceScope, SourceType } from '../../types/enums';
 
 export interface SourcesPanelProps {
   api: ApiClient;
+  platformXReady?: boolean;
 }
 
 const SOURCE_TYPE_VALUES: readonly SourceType[] = [
@@ -67,8 +69,10 @@ function getOutcomeBadgeClass(outcome: FetchOutcome | null): string {
   }
 }
 
-export function SourcesPanel({ api }: SourcesPanelProps) {
+export function SourcesPanel({ api, platformXReady: platformXReadyProp }: SourcesPanelProps) {
   const { t, labelSourceType, labelSourceScope, labelFetchOutcome } = useI18n();
+  const auth = useOptionalAuth();
+  const platformXReady = platformXReadyProp ?? auth?.platformXReady ?? false;
   const tRef = useRef(t);
   tRef.current = t;
 
@@ -420,6 +424,15 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
               />
               <span>{t('sourceSettings.includeXTemplates')}</span>
             </label>
+            {includeXTemplates && (
+              <p
+                className={`mt-2 text-xs ${platformXReady ? 'text-sky-300' : 'text-amber-300'}`}
+              >
+                {platformXReady
+                  ? t('sourceSettings.xPlatformReadyBanner')
+                  : t('sourceSettings.xMissingCredsBanner')}
+              </p>
+            )}
           </div>
           <button
             type="button"
@@ -609,6 +622,16 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                         <div className="text-[11px] text-emerald-300">
                           {t('sourceSettings.credentialsConfigured')}
                           {src.configHint ? ` (${src.configHint})` : ''}
+                        </div>
+                      )}
+                      {isXSourceType(src.sourceType) && !src.hasCredentials && platformXReady && (
+                        <div className="text-[11px] text-sky-300">
+                          {t('sourceSettings.xBridgeBadge')}
+                        </div>
+                      )}
+                      {isXSourceType(src.sourceType) && !src.hasCredentials && !platformXReady && (
+                        <div className="text-[11px] text-amber-300">
+                          {t('sourceSettings.xPausedNeedsSetup')}
                         </div>
                       )}
                       {src.lastError && (
