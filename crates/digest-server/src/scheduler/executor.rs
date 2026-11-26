@@ -325,6 +325,7 @@ impl ExecutionOrchestrator for ServerExecutionOrchestrator {
             } else {
                 DEFAULT_LLM_MAX_TOKENS
             }),
+            output_language: base_cfg.output_language,
         };
 
         let endpoint_url = OpenAiCompatProvider::build_chat_completions_url(&ai_cfg.base_url)?;
@@ -425,6 +426,7 @@ impl ExecutionOrchestrator for ServerExecutionOrchestrator {
             } else {
                 DEFAULT_LLM_MAX_TOKENS
             },
+            output_language: base_cfg.output_language,
         };
 
         let endpoint_url = OpenAiCompatProvider::build_models_url(&ai_cfg.base_url)?;
@@ -712,6 +714,7 @@ async fn render_channel_test_notification_blocking(
         highlighted_items: Vec::new(),
         all_items: Vec::new(),
         priority: AlertPriority::Normal,
+        locale: digest_core::domain::default_digest_locale(),
     };
 
     tokio::task::spawn_blocking(move || renderer.render_structured(&render_input))
@@ -757,6 +760,7 @@ async fn render_digest_detail_blocking(
         highlighted_items,
         all_items,
         priority: highest_priority,
+        locale: digest_core::domain::default_digest_locale(),
     };
 
     tokio::task::spawn_blocking(move || renderer.render_structured(&render_input))

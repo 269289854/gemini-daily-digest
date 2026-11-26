@@ -11,6 +11,7 @@ import type {
   DeliveryStatus,
   ErrorCode,
   FetchOutcome,
+  Locale,
   NotificationChannelType,
   RunStatus,
   RunType,
@@ -64,8 +65,13 @@ export interface UserRecord {
   email: string | null;
   displayName: string | null;
   role: string;
+  preferredLocale?: Locale;
   createdAt: string;
   lastLoginAt: string | null;
+}
+
+export interface UpdateUserPreferencesCmd {
+  preferredLocale: Locale;
 }
 
 export interface OnboardingFlags {

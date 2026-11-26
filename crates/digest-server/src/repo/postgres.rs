@@ -211,6 +211,9 @@ fn col_err(col: &'static str, err: sqlx::Error) -> CoreError {
 }
 
 fn parse_user_row(row: &PgRow) -> Result<UserRecord, CoreError> {
+    let preferred_locale: String = row
+        .try_get("preferred_locale")
+        .map_err(|e| col_err("preferred_locale", e))?;
     Ok(UserRecord {
         id: row.try_get("id").map_err(|e| col_err("id", e))?,
         oidc_sub: row
@@ -221,6 +224,8 @@ fn parse_user_row(row: &PgRow) -> Result<UserRecord, CoreError> {
             .try_get("display_name")
             .map_err(|e| col_err("display_name", e))?,
         role: row.try_get("role").map_err(|e| col_err("role", e))?,
+        preferred_locale: digest_core::domain::normalize_digest_locale(&preferred_locale)
+            .to_owned(),
         created_at: row
             .try_get("created_at")
             .map_err(|e| col_err("created_at", e))?,
@@ -635,7 +640,7 @@ impl UserRepo for PostgresRepoStore {
                 display_name = COALESCE(EXCLUDED.display_name, users.display_name),
                 role = CASE WHEN EXCLUDED.role = 'admin' THEN 'admin' ELSE users.role END,
                 last_login_at = NOW()
-            RETURNING id, oidc_sub, email, display_name, role, created_at, last_login_at
+            RETURNING id, oidc_sub, email, display_name, role, preferred_locale, created_at, last_login_at
             "#,
         )
         .bind(Uuid::new_v4())
@@ -675,7 +680,7 @@ impl UserRepo for PostgresRepoStore {
     async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<UserRecord>, CoreError> {
         let row = sqlx::query(
             r#"
-            SELECT id, oidc_sub, email, display_name, role, created_at, last_login_at
+            SELECT id, oidc_sub, email, display_name, role, preferred_locale, created_at, last_login_at
             FROM users
             WHERE id = $1
             "#,
@@ -686,6 +691,29 @@ impl UserRepo for PostgresRepoStore {
         .map_err(map_pg_err)?;
 
         row.as_ref().map(parse_user_row).transpose()
+    }
+
+    async fn update_user_locale(
+        &self,
+        user_id: Uuid,
+        preferred_locale: &str,
+    ) -> Result<UserRecord, CoreError> {
+        let normalized = digest_core::domain::normalize_digest_locale(preferred_locale);
+        let row = sqlx::query(
+            r#"
+            UPDATE users
+            SET preferred_locale = $2
+            WHERE id = $1
+            RETURNING id, oidc_sub, email, display_name, role, preferred_locale, created_at, last_login_at
+            "#,
+        )
+        .bind(user_id)
+        .bind(normalized)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_pg_err)?;
+
+        parse_user_row(&row)
     }
 
     async fn get_onboarding_flags(&self, user_id: Uuid) -> Result<OnboardingFlags, CoreError> {

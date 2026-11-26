@@ -41,9 +41,11 @@ import type {
   UpdatePlatformSettingsResult,
   UpdateScheduleCmd,
   UpdateSourceCmd,
+  UpdateUserPreferencesCmd,
   UpsertBookmarkCmd,
   UpsertWatchlistRuleCmd,
   UserAiConfigView,
+  UserRecord,
   UserScheduleRecord,
   UserSourceView,
   WatchlistRuleRecord,
@@ -305,6 +307,14 @@ export function createApiClient(config: ApiClientConfig) {
       return request<MeResponse>({
         method: 'GET',
         path: API_ROUTES.ME,
+      });
+    },
+
+    updateUserPreferences(cmd: UpdateUserPreferencesCmd): Promise<UserRecord> {
+      return request<UserRecord>({
+        method: 'PUT',
+        path: API_ROUTES.ME_PREFERENCES,
+        body: cmd,
       });
     },
 

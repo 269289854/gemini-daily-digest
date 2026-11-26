@@ -10,8 +10,8 @@ use digest_core::constants::{
 };
 use digest_core::crypto::{mask_secret, EnvelopeCipher};
 use digest_core::domain::{
-    AlertPriority, DeliveryStatus, DigestSection, FetchOutcome, NotificationChannelType, RunStatus,
-    RunType, SourceScope, SourceType, WatchlistRuleInput,
+    default_digest_locale, AlertPriority, DeliveryStatus, DigestSection, FetchOutcome,
+    NotificationChannelType, RunStatus, RunType, SourceScope, SourceType, WatchlistRuleInput,
 };
 use digest_core::error::CoreError;
 use digest_core::presets::find_preset_by_key;
@@ -111,6 +111,8 @@ pub struct UserRecord {
     pub email: Option<String>,
     pub display_name: Option<String>,
     pub role: String,
+    #[serde(default = "default_digest_locale")]
+    pub preferred_locale: String,
     pub created_at: DateTime<Utc>,
     pub last_login_at: Option<DateTime<Utc>>,
 }

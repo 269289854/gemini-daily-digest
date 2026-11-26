@@ -248,6 +248,7 @@ pub(crate) mod test_support {
                 email: cmd.email,
                 display_name: cmd.display_name,
                 role: cmd.role,
+                preferred_locale: digest_core::domain::default_digest_locale(),
                 created_at: Utc::now(),
                 last_login_at: Some(Utc::now()),
             };
@@ -257,6 +258,20 @@ pub(crate) mod test_support {
 
         async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<UserRecord>, CoreError> {
             Ok(self.users.lock().unwrap().get(&user_id).cloned())
+        }
+
+        async fn update_user_locale(
+            &self,
+            user_id: Uuid,
+            preferred_locale: &str,
+        ) -> Result<UserRecord, CoreError> {
+            let mut guard = self.users.lock().unwrap();
+            let rec = guard
+                .get_mut(&user_id)
+                .ok_or_else(|| CoreError::NotFound("user not found".to_owned()))?;
+            rec.preferred_locale =
+                digest_core::domain::normalize_digest_locale(preferred_locale).to_owned();
+            Ok(rec.clone())
         }
 
         async fn get_onboarding_flags(&self, _user_id: Uuid) -> Result<OnboardingFlags, CoreError> {

@@ -3,11 +3,12 @@
 
 use axum::extract::State;
 use axum::Json;
+use digest_core::constants::{LOCALE_EN_US, LOCALE_ZH_CN};
 use digest_core::domain::AuthMode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::api::admin::compute_platform_x_ready;
-use crate::api::error::{ApiError, RequestId};
+use crate::api::error::{ApiError, ApiJson, RequestId};
 use crate::auth::AuthenticatedUser;
 use crate::repo::{OnboardingFlags, UserRecord};
 use crate::state::AppState;
@@ -62,4 +63,41 @@ pub async fn get_me(
         onboarding,
         platform_x_ready,
     }))
+}
+
+/// Request payload for `PUT /api/v1/me/preferences`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateUserPreferencesRequest {
+    pub preferred_locale: String,
+}
+
+/// `PUT /api/v1/me/preferences` — updates the authenticated user's preferred digest/UI locale.
+pub async fn update_me_preferences(
+    State(state): State<AppState>,
+    req_id: RequestId,
+    AuthenticatedUser(user): AuthenticatedUser,
+    ApiJson(body): ApiJson<UpdateUserPreferencesRequest>,
+) -> Result<Json<UserRecord>, ApiError> {
+    let trimmed = body.preferred_locale.trim();
+    let normalized =
+        if trimmed.eq_ignore_ascii_case(LOCALE_ZH_CN) || trimmed.eq_ignore_ascii_case("zh") {
+            LOCALE_ZH_CN
+        } else if trimmed.eq_ignore_ascii_case(LOCALE_EN_US) || trimmed.eq_ignore_ascii_case("en") {
+            LOCALE_EN_US
+        } else {
+            return Err(ApiError::invalid_input(
+                req_id.0,
+                "preferredLocale must be 'zh-CN' or 'en-US'",
+            ));
+        };
+
+    let updated = state
+        .repos
+        .users
+        .update_user_locale(user.id, normalized)
+        .await
+        .map_err(|err| ApiError::new(&req_id.0, err))?;
+
+    Ok(Json(updated))
 }

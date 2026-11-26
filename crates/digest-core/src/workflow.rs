@@ -575,6 +575,7 @@ impl DigestWorkflowTemplate for DigestExecutionWorkflow {
             highlighted_items: processed.highlighted_items.clone(),
             all_items: processed.processed_items.clone(),
             priority: highest_priority,
+            locale: input.ai_config.output_language.clone(),
         };
 
         let rendered = self.renderer.render_structured(&render_input)?;
@@ -768,6 +769,7 @@ mod tests {
             system_prompt: "Summarize Gemini ecosystem updates concisely.".to_owned(),
             temperature: 0.2,
             max_tokens: 1024,
+            output_language: "en-US".to_owned(),
         }
     }
 

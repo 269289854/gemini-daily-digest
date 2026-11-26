@@ -4,6 +4,7 @@
 /// Sub-routes mounted under `digest_core::constants::API_PREFIX` (`/api/v1`).
 pub const SUBROUTE_AUTH_CONFIG: &str = "/auth/config";
 pub const SUBROUTE_ME: &str = "/me";
+pub const SUBROUTE_ME_PREFERENCES: &str = "/me/preferences";
 pub const SUBROUTE_DIGESTS: &str = "/digests";
 pub const SUBROUTE_DIGEST_BY_DATE: &str = "/digests/{date}";
 pub const SUBROUTE_DIGEST_MARKDOWN: &str = "/digests/{date}/markdown";

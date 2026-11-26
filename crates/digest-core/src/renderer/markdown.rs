@@ -5,7 +5,7 @@ use std::ops::Range;
 use pulldown_cmark::{Event, LinkType, Options, Parser, Tag, TagEnd};
 
 use crate::constants::{MARKDOWN_SAFE_REF_PLACEHOLDER, MARKDOWN_SANITIZE_MAX_PASSES};
-use crate::domain::{AlertPriority, RenderInput};
+use crate::domain::{is_zh_locale, AlertPriority, RenderInput};
 use crate::error::CoreError;
 use crate::renderer::html_email::{render_html_body, sanitize_http_url};
 use crate::renderer::plain_text::render_plain_text_body;
@@ -55,37 +55,53 @@ impl DigestRenderer for MarkdownDigestRenderer {
 /// Renders structured Markdown for a `RenderInput`.
 #[must_use]
 pub fn render_markdown_body(input: &RenderInput) -> String {
+    let zh_mode = is_zh_locale(&input.locale);
     let mut lines = Vec::new();
     lines.push(format!(
         "# {}",
         escape_markdown_metadata(input.digest.title.trim())
     ));
-    lines.push(format!(
-        "_Date: {} | Priority: {}_",
-        input.digest_date,
-        input.priority.as_str().to_uppercase()
-    ));
+    lines.push(if zh_mode {
+        format!(
+            "_日期: {} | 优先级: {}_",
+            input.digest_date,
+            input.priority.as_str().to_uppercase()
+        )
+    } else {
+        format!(
+            "_Date: {} | Priority: {}_",
+            input.digest_date,
+            input.priority.as_str().to_uppercase()
+        )
+    });
 
     if input.digest.degraded_fallback {
         lines.push(String::new());
-        lines.push(
+        lines.push(if zh_mode {
+            "> **提示：** 主大模型服务暂不可用，当前展示离线降级摘要。".to_owned()
+        } else {
             "> **Notice:** Primary AI summarization was unavailable; deterministic fallback summary shown."
-                .to_owned(),
-        );
+                .to_owned()
+        });
     }
 
     lines.push(String::new());
-    lines.push("## Executive Overview".to_owned());
+    lines.push(if zh_mode {
+        "## 核心综述".to_owned()
+    } else {
+        "## Executive Overview".to_owned()
+    });
     lines.push(sanitize_markdown_content(
         input.digest.overview_markdown.trim(),
     ));
 
     if !input.highlighted_items.is_empty() {
         lines.push(String::new());
-        lines.push(format!(
-            "## Highlighted Alerts ({})",
-            input.highlighted_items.len()
-        ));
+        lines.push(if zh_mode {
+            format!("## 重点关注提醒 ({})", input.highlighted_items.len())
+        } else {
+            format!("## Highlighted Alerts ({})", input.highlighted_items.len())
+        });
         for item in &input.highlighted_items {
             lines.push(format_markdown_item(item));
         }
@@ -93,7 +109,11 @@ pub fn render_markdown_body(input: &RenderInput) -> String {
 
     if !input.sections.is_empty() {
         lines.push(String::new());
-        lines.push("## Per-Source Digests".to_owned());
+        lines.push(if zh_mode {
+            "## 各来源独立汇总".to_owned()
+        } else {
+            "## Per-Source Digests".to_owned()
+        });
         for section in &input.sections {
             lines.push(String::new());
             lines.push(format!(
@@ -116,7 +136,11 @@ pub fn render_markdown_body(input: &RenderInput) -> String {
         }
     } else if !input.all_items.is_empty() {
         lines.push(String::new());
-        lines.push("## Collected Items".to_owned());
+        lines.push(if zh_mode {
+            "## 采集条目".to_owned()
+        } else {
+            "## Collected Items".to_owned()
+        });
         for item in &input.all_items {
             lines.push(format_markdown_item(item));
         }
@@ -124,18 +148,28 @@ pub fn render_markdown_body(input: &RenderInput) -> String {
 
     lines.push(String::new());
     lines.push("---".to_owned());
-    let fallback_tag = if input.digest.degraded_fallback {
-        " (degraded fallback)"
-    } else {
-        ""
+    let fallback_tag = match (input.digest.degraded_fallback, zh_mode) {
+        (true, true) => "（降级摘要）",
+        (true, false) => " (degraded fallback)",
+        (false, _) => "",
     };
-    lines.push(format!(
-        "Model: `{}`{} | Tokens: {} prompt / {} completion",
-        sanitize_markdown_inline_code_metadata(input.digest.model_used.trim()),
-        fallback_tag,
-        input.digest.prompt_tokens,
-        input.digest.completion_tokens
-    ));
+    lines.push(if zh_mode {
+        format!(
+            "模型: `{}`{} | Token 消耗: {} 输入 / {} 输出",
+            sanitize_markdown_inline_code_metadata(input.digest.model_used.trim()),
+            fallback_tag,
+            input.digest.prompt_tokens,
+            input.digest.completion_tokens
+        )
+    } else {
+        format!(
+            "Model: `{}`{} | Tokens: {} prompt / {} completion",
+            sanitize_markdown_inline_code_metadata(input.digest.model_used.trim()),
+            fallback_tag,
+            input.digest.prompt_tokens,
+            input.digest.completion_tokens
+        )
+    });
 
     let assembled = lines.join("\n");
     sanitize_markdown_content(&assembled)

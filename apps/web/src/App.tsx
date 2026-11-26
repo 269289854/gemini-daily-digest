@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Globe, Loader2, LogIn, Monitor, Sparkles } from 'lucide-react';
 import { normalizeBaseUrl } from './api/client';
 import { AuthCallbackPage } from './auth/AuthCallbackPage';
@@ -15,7 +15,7 @@ import { SETTINGS_TABS, SettingsPage, type SettingsTab } from './pages/SettingsP
 import { SourcesExplorerPage } from './pages/SourcesExplorerPage';
 import { type PlatformBridge, PlatformRuntime, createPlatformBridge } from './platform/bridge';
 import type { DigestReadyEvent } from './types/api';
-import { AuthMode } from './types/enums';
+import { AuthMode, type Locale } from './types/enums';
 
 export type AppRoute = (typeof APP_ROUTES)[keyof typeof APP_ROUTES];
 
@@ -120,9 +120,29 @@ function AuthenticatedShell({
   routeState,
   onNavigate,
 }: AuthenticatedShellProps) {
-  const { api, accessToken, refreshAccessToken, serverBaseUrl, updateServerBaseUrl } = useAuth();
-  const { t } = useI18n();
+  const { api, accessToken, refreshAccessToken, user, serverBaseUrl, updateServerBaseUrl } =
+    useAuth();
+  const { locale, t } = useI18n();
   const [latestDigestReady, setLatestDigestReady] = useState<DigestReadyEvent | null>(null);
+  const lastSyncedLocaleRef = useRef<Locale | null>(null);
+
+  useEffect(() => {
+    if (!user || typeof api.updateUserPreferences !== 'function') {
+      return;
+    }
+    const serverLocale = user.preferredLocale;
+    if (
+      lastSyncedLocaleRef.current === locale ||
+      (lastSyncedLocaleRef.current === null && serverLocale === locale)
+    ) {
+      lastSyncedLocaleRef.current = locale;
+      return;
+    }
+    lastSyncedLocaleRef.current = locale;
+    void api.updateUserPreferences({ preferredLocale: locale }).catch(() => {
+      // Silently ignore preference sync failures in offline or mocked environments.
+    });
+  }, [api, locale, user]);
 
   const sse = useSse({
     enabled: true,

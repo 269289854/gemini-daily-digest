@@ -16,9 +16,10 @@ use digest_core::constants::{
 };
 use digest_core::crypto::EnvelopeCipher;
 use digest_core::domain::{
-    AlertPriority, DailyDigestSynthesisInput, DeliveryStatus, DigestSection, FetchOutcome,
-    ItemMatchResult, NotificationChannelType, NotifierConfig, ProcessedItem, RenderInput,
-    RunStatus, RunType, SourceDigestInput, SourceSummaryResult, UserAiConfig, WatchlistRuleInput,
+    default_digest_locale, is_zh_locale, normalize_digest_locale, AlertPriority,
+    DailyDigestSynthesisInput, DeliveryStatus, DigestSection, FetchOutcome, ItemMatchResult,
+    NotificationChannelType, NotifierConfig, ProcessedItem, RenderInput, RunStatus, RunType,
+    SourceDigestInput, SourceSummaryResult, UserAiConfig, WatchlistRuleInput,
 };
 use digest_core::error::CoreError;
 use digest_core::llm::{compute_input_fingerprint, IdempotentLlmRunner};
@@ -244,6 +245,13 @@ async fn compose_inner(
     notify: bool,
 ) -> Result<ComposeOutcome, CoreError> {
     let run_id = run_record.id;
+    let user_locale = deps
+        .repos
+        .users
+        .get_user_by_id(user_id)
+        .await?
+        .map(|u| normalize_digest_locale(&u.preferred_locale).to_owned())
+        .unwrap_or_else(default_digest_locale);
     let schedule = deps.repos.settings.get_schedule(user_id).await?;
     let source_views = deps.repos.sources.list_user_sources(user_id).await?;
 
@@ -473,12 +481,13 @@ async fn compose_inner(
 
     // Resolve and decrypt user AI config (`spawn_blocking` if encrypted key present).
     let ai_record = deps.repos.settings.get_ai_config(user_id).await?;
-    let ai_config = resolve_user_ai_config_blocking(
+    let mut ai_config = resolve_user_ai_config_blocking(
         Arc::clone(&deps.cipher),
         ai_record,
         deps.config.core.llm.default_max_tokens,
     )
     .await;
+    ai_config.output_language = user_locale.clone();
 
     let daily_fp = compute_input_fingerprint(digest_date, &ai_config, &processed_items);
 
@@ -497,6 +506,7 @@ async fn compose_inner(
                     &existing_digest,
                     &highlighted_items,
                     &processed_items,
+                    &user_locale,
                 )
                 .await?;
                 dispatch_daily_notifications(
@@ -602,11 +612,20 @@ async fn compose_inner(
         prompt_tokens_u32,
         completion_tokens_u32,
     ) = if processed_items.is_empty() {
+        let zh_mode = is_zh_locale(&user_locale);
         (
             daily_fp,
             SummarizedDigest {
-                title: format!("Gemini Daily Digest — {digest_date}"),
-                overview_markdown: format!("No new items collected for {digest_date}."),
+                title: if zh_mode {
+                    format!("Gemini 每日情报汇总 — {digest_date}")
+                } else {
+                    format!("Gemini Daily Digest — {digest_date}")
+                },
+                overview_markdown: if zh_mode {
+                    format!("{digest_date} 暂无新增采集内容。")
+                } else {
+                    format!("No new items collected for {digest_date}.")
+                },
                 prompt_tokens: 0,
                 completion_tokens: 0,
                 model_used: ai_config.model.clone(),
@@ -657,6 +676,7 @@ async fn compose_inner(
         highlighted_items: highlighted_items.clone(),
         all_items: processed_items.clone(),
         priority: highest_priority,
+        locale: user_locale.clone(),
     };
 
     let renderer = Arc::clone(&deps.renderer);
@@ -1015,6 +1035,7 @@ pub async fn resolve_user_ai_config_blocking(
             system_prompt: DEFAULT_LLM_SYSTEM_PROMPT.to_owned(),
             temperature: DEFAULT_LLM_TEMPERATURE,
             max_tokens: DEFAULT_LLM_MAX_TOKENS,
+            output_language: default_digest_locale(),
         };
     };
 
@@ -1052,6 +1073,7 @@ pub async fn resolve_user_ai_config_blocking(
         system_prompt: rec.system_prompt,
         temperature: rec.temperature,
         max_tokens: u32::try_from(rec.max_tokens.max(1)).unwrap_or(default_max_tokens),
+        output_language: default_digest_locale(),
     }
 }
 
@@ -1093,6 +1115,7 @@ async fn render_existing_digest_blocking(
     digest: &DailyDigestDetail,
     highlighted_items: &[ProcessedItem],
     all_items: &[ProcessedItem],
+    user_locale: &str,
 ) -> Result<RenderedNotification, CoreError> {
     let highest_priority = all_items
         .iter()
@@ -1114,6 +1137,7 @@ async fn render_existing_digest_blocking(
         highlighted_items: highlighted_items.to_vec(),
         all_items: all_items.to_vec(),
         priority: highest_priority,
+        locale: user_locale.to_owned(),
     };
 
     tokio::task::spawn_blocking(move || renderer.render_structured(&input))

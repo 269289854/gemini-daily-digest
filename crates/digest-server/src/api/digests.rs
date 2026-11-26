@@ -89,7 +89,7 @@ pub async fn get_digest_markdown(
             )
         })?;
 
-    let markdown = render_detail_as_markdown(detail);
+    let markdown = render_detail_as_markdown(detail, user.preferred_locale);
     Ok((
         StatusCode::OK,
         [(CONTENT_TYPE, CONTENT_TYPE_MARKDOWN_UTF8)],
@@ -97,7 +97,7 @@ pub async fn get_digest_markdown(
     ))
 }
 
-fn render_detail_as_markdown(detail: DailyDigestDetail) -> String {
+fn render_detail_as_markdown(detail: DailyDigestDetail, locale: String) -> String {
     let all_items: Vec<ProcessedItem> = detail
         .sections
         .iter()
@@ -134,6 +134,7 @@ fn render_detail_as_markdown(detail: DailyDigestDetail) -> String {
         highlighted_items,
         all_items,
         priority,
+        locale,
     };
 
     MarkdownDigestRenderer::new().render_markdown(&input)

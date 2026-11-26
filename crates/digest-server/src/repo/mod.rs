@@ -19,6 +19,11 @@ pub use dto::*;
 pub trait UserRepo: Send + Sync {
     async fn upsert_oidc_user(&self, cmd: UpsertUserCmd) -> Result<UserRecord, CoreError>;
     async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<UserRecord>, CoreError>;
+    async fn update_user_locale(
+        &self,
+        user_id: Uuid,
+        preferred_locale: &str,
+    ) -> Result<UserRecord, CoreError>;
     async fn get_onboarding_flags(&self, user_id: Uuid) -> Result<OnboardingFlags, CoreError>;
 }
 

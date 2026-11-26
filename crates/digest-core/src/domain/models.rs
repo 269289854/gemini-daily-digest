@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::constants::{
-    DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL, DEFAULT_AI_PROVIDER_LABEL, DEFAULT_LLM_MAX_TOKENS,
-    DEFAULT_LLM_SYSTEM_PROMPT, DEFAULT_LLM_TEMPERATURE, SECRET_MASK_REDACTED_PLACEHOLDER,
+    DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL, DEFAULT_AI_PROVIDER_LABEL, DEFAULT_DIGEST_LOCALE,
+    DEFAULT_LLM_MAX_TOKENS, DEFAULT_LLM_SYSTEM_PROMPT, DEFAULT_LLM_TEMPERATURE, LOCALE_EN_US,
+    LOCALE_ZH_CN, SECRET_MASK_REDACTED_PLACEHOLDER,
 };
 use crate::domain::enums::{
     AlertPriority, DeliveryStatus, FetchOutcome, NotificationChannelType, RunStatus, RunType,
@@ -106,6 +107,28 @@ impl From<&ProcessedItem> for RawCollectedItem {
     }
 }
 
+/// Normalizes a user locale tag into a supported digest output locale (`"zh-CN"` or `"en-US"`).
+#[must_use]
+pub fn normalize_digest_locale(raw: &str) -> &'static str {
+    if raw.trim().to_ascii_lowercase().starts_with("zh") {
+        LOCALE_ZH_CN
+    } else {
+        LOCALE_EN_US
+    }
+}
+
+/// Returns `true` when `raw` selects Simplified Chinese digest output.
+#[must_use]
+pub fn is_zh_locale(raw: &str) -> bool {
+    normalize_digest_locale(raw) == LOCALE_ZH_CN
+}
+
+/// Returns the default digest output locale (`"en-US"`) for serde field defaults.
+#[must_use]
+pub fn default_digest_locale() -> String {
+    DEFAULT_DIGEST_LOCALE.to_owned()
+}
+
 /// Runtime OpenAI-compatible AI configuration for a user (with redacted `Debug`).
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -117,6 +140,8 @@ pub struct UserAiConfig {
     pub system_prompt: String,
     pub temperature: f32,
     pub max_tokens: u32,
+    #[serde(default = "default_digest_locale")]
+    pub output_language: String,
 }
 
 impl Default for UserAiConfig {
@@ -129,6 +154,7 @@ impl Default for UserAiConfig {
             system_prompt: DEFAULT_LLM_SYSTEM_PROMPT.to_owned(),
             temperature: DEFAULT_LLM_TEMPERATURE,
             max_tokens: DEFAULT_LLM_MAX_TOKENS,
+            output_language: default_digest_locale(),
         }
     }
 }
@@ -148,6 +174,7 @@ impl fmt::Debug for UserAiConfig {
             .field("system_prompt", &self.system_prompt)
             .field("temperature", &self.temperature)
             .field("max_tokens", &self.max_tokens)
+            .field("output_language", &self.output_language)
             .finish()
     }
 }
@@ -211,6 +238,8 @@ pub struct RenderInput {
     pub highlighted_items: Vec<ProcessedItem>,
     pub all_items: Vec<ProcessedItem>,
     pub priority: AlertPriority,
+    #[serde(default = "default_digest_locale")]
+    pub locale: String,
 }
 
 /// Decrypted outbound notifier configuration (with redacted `Debug`).

@@ -361,6 +361,15 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         if (err instanceof ApiError && err.status === 401) {
           setIsAuthenticated(false);
           setError(null);
+        } else if (
+          activeBridge.runtime === PlatformRuntime.DESKTOP &&
+          !serverBaseUrlRef.current.trim()
+        ) {
+          authConfigRef.current = null;
+          setAuthConfig(null);
+          setIsAuthenticated(false);
+          setError(null);
+          syncDesktopSession('', accessTokenRef.current, null);
         } else {
           setIsAuthenticated(false);
           setError(err instanceof Error ? err.message : 'Failed to initialize authentication');
@@ -382,7 +391,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     return () => {
       cancelled = true;
     };
-  }, [api, initGeneration, refreshAccessToken, serverBaseUrl, syncDesktopSession]);
+  }, [activeBridge, api, initGeneration, refreshAccessToken, serverBaseUrl, syncDesktopSession]);
 
   useEffect(() => {
     if (
@@ -542,7 +551,18 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
   const login = useCallback(async (): Promise<void> => {
     setError(null);
     try {
-      const config = authConfigRef.current ?? (await api.getAuthConfig());
+      let config = authConfigRef.current;
+      if (!config) {
+        if (activeBridge.runtime === PlatformRuntime.DESKTOP && !serverBaseUrlRef.current.trim()) {
+          try {
+            config = await api.getAuthConfig();
+          } catch {
+            throw new Error('Please configure and apply the Server Base URL first.');
+          }
+        } else {
+          config = await api.getAuthConfig();
+        }
+      }
       authConfigRef.current = config;
       setAuthConfig(config);
 

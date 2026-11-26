@@ -312,6 +312,36 @@ async fn oidc_rs256_jwks_and_dev_bypass_enforce_strict_auth_boundaries() {
     let ok_me_json = read_json_body(ok_me).await;
     assert_eq!(ok_me_json["user"]["oidcSub"], "oidc-user-alpha");
     assert_eq!(ok_me_json["user"]["email"], "alpha@example.com");
+    assert_eq!(ok_me_json["user"]["preferredLocale"], "en-US");
+
+    // User preferences endpoint persists preferredLocale and rejects invalid locales.
+    let pref_resp = oidc_app
+        .clone()
+        .oneshot(json_request(
+            Method::PUT,
+            "/api/v1/me/preferences",
+            Some(serde_json::json!({ "preferredLocale": "zh-CN" })),
+            None,
+            Some(&valid_jwt),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(pref_resp.status(), StatusCode::OK);
+    let pref_json = read_json_body(pref_resp).await;
+    assert_eq!(pref_json["preferredLocale"], "zh-CN");
+
+    let bad_pref_resp = oidc_app
+        .clone()
+        .oneshot(json_request(
+            Method::PUT,
+            "/api/v1/me/preferences",
+            Some(serde_json::json!({ "preferredLocale": "fr-FR" })),
+            None,
+            Some(&valid_jwt),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(bad_pref_resp.status(), StatusCode::BAD_REQUEST);
 
     // Expired JWT rejected.
     let expired_jwt = jsonwebtoken::encode(

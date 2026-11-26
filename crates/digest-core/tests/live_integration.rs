@@ -157,6 +157,7 @@ async fn live_deepseek_workflow_cache_and_smtp_delivery() -> Result<(), CoreErro
                 .to_owned(),
         temperature: 0.2,
         max_tokens: 1024,
+        ..UserAiConfig::default()
     };
 
     // 1. Live LLM connectivity check.

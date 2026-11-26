@@ -444,6 +444,7 @@ impl UserRepo for InMemoryRepoStore {
                 email: cmd.email,
                 display_name: cmd.display_name,
                 role,
+                preferred_locale: digest_core::domain::default_digest_locale(),
                 created_at: now,
                 last_login_at: Some(now),
             };
@@ -467,6 +468,21 @@ impl UserRepo for InMemoryRepoStore {
     async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<UserRecord>, CoreError> {
         let state = self.state.read().await;
         Ok(state.users.get(&user_id).cloned())
+    }
+
+    async fn update_user_locale(
+        &self,
+        user_id: Uuid,
+        preferred_locale: &str,
+    ) -> Result<UserRecord, CoreError> {
+        let normalized = digest_core::domain::normalize_digest_locale(preferred_locale).to_owned();
+        let mut state = self.state.write().await;
+        let user = state
+            .users
+            .get_mut(&user_id)
+            .ok_or_else(|| CoreError::NotFound("user not found".to_owned()))?;
+        user.preferred_locale = normalized;
+        Ok(user.clone())
     }
 
     async fn get_onboarding_flags(&self, user_id: Uuid) -> Result<OnboardingFlags, CoreError> {

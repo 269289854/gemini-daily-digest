@@ -1,7 +1,7 @@
 //! Gmail light/dark safe HTML email renderer with strict XSS escaping and URL scheme filtering.
 
 use crate::constants::SSRF_ALLOWED_SCHEMES;
-use crate::domain::{AlertPriority, DigestSection, ProcessedItem, RenderInput};
+use crate::domain::{is_zh_locale, AlertPriority, DigestSection, ProcessedItem, RenderInput};
 use crate::error::CoreError;
 use crate::renderer::markdown::render_markdown_body;
 use crate::renderer::plain_text::render_plain_text_body;
@@ -80,37 +80,62 @@ pub fn sanitize_http_url(raw: &str) -> Option<String> {
 /// Renders a Gmail light/dark safe HTML email body from a `RenderInput`.
 #[must_use]
 pub fn render_html_body(input: &RenderInput) -> String {
+    let zh_mode = is_zh_locale(&input.locale);
+    let html_lang = if zh_mode { "zh-CN" } else { "en" };
     let subject = escape_html(&format_subject(input));
     let title = escape_html(&input.digest.title);
     let date_str = escape_html(&input.digest_date.to_string());
     let priority_badge = render_priority_badge(input.priority);
 
     let degraded_banner = if input.digest.degraded_fallback {
-        r#"<tr><td style="padding:10px 20px;background-color:#FEF3C7;color:#92400E;border-bottom:1px solid #F59E0B;font-size:13px;" class="gdd-warn"><strong>Fallback Mode:</strong> Primary AI summarization was unavailable; showing deterministic summary.</td></tr>"#
+        if zh_mode {
+            r#"<tr><td style="padding:10px 20px;background-color:#FEF3C7;color:#92400E;border-bottom:1px solid #F59E0B;font-size:13px;" class="gdd-warn"><strong>降级模式：</strong> 主大模型服务暂不可用，当前展示离线降级摘要。</td></tr>"#
+        } else {
+            r#"<tr><td style="padding:10px 20px;background-color:#FEF3C7;color:#92400E;border-bottom:1px solid #F59E0B;font-size:13px;" class="gdd-warn"><strong>Fallback Mode:</strong> Primary AI summarization was unavailable; showing deterministic summary.</td></tr>"#
+        }
     } else {
         ""
     };
 
-    let alerts_html = render_alerts_section(&input.highlighted_items);
-    let overview_html = render_overview_paragraphs(&input.digest.overview_markdown);
+    let alerts_html = render_alerts_section(&input.highlighted_items, zh_mode);
+    let overview_html = render_overview_paragraphs(&input.digest.overview_markdown, zh_mode);
     let sections_html = if input.sections.is_empty() {
-        render_flat_items_section(&input.all_items)
+        render_flat_items_section(&input.all_items, zh_mode)
     } else {
-        render_sections_html(&input.sections)
+        render_sections_html(&input.sections, zh_mode)
     };
 
     let model_used = escape_html(&input.digest.model_used);
     let prompt_tokens = input.digest.prompt_tokens;
     let completion_tokens = input.digest.completion_tokens;
-    let degraded_label = if input.digest.degraded_fallback {
-        " (degraded fallback)"
+    let degraded_label = match (input.digest.degraded_fallback, zh_mode) {
+        (true, true) => "（降级摘要）",
+        (true, false) => " (degraded fallback)",
+        (false, _) => "",
+    };
+    let header_eyebrow = if zh_mode {
+        "每日 AI 生态情报"
     } else {
-        ""
+        "Daily Intelligence Digest"
+    };
+    let overview_heading = if zh_mode {
+        "核心综述"
+    } else {
+        "Executive Overview"
+    };
+    let footer_text = if zh_mode {
+        format!(
+            "模型: <strong>{model_used}</strong>{degraded_label} &middot; Token 消耗: {prompt_tokens} 输入 / {completion_tokens} 输出"
+        )
+    } else {
+        format!(
+            "Model: <strong>{model_used}</strong>{degraded_label} &middot; Tokens: {prompt_tokens} prompt / {completion_tokens} completion"
+        )
     };
 
     format!(
         r#"<!DOCTYPE html>
-<html lang="en">
+<html lang="{html_lang}">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -137,7 +162,7 @@ pub fn render_html_body(input: &RenderInput) -> String {
       <table role="presentation" width="100%" cellspacing="0" cellpadding="0" class="gdd-card" style="max-width:680px;background-color:#FFFFFF;border:1px solid #E2E8F0;border-radius:10px;overflow:hidden;">
         <tr>
           <td style="padding:20px 24px;background-color:#1E293B;color:#F8FAFC;">
-            <div style="font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:#94A3B8;">Daily Intelligence Digest &middot; {date_str}</div>
+            <div style="font-size:12px;letter-spacing:0.06em;text-transform:uppercase;color:#94A3B8;">{header_eyebrow} &middot; {date_str}</div>
             <h1 style="margin:6px 0 8px 0;font-size:20px;line-height:1.3;color:#FFFFFF;">{title}</h1>
             {priority_badge}
           </td>
@@ -146,7 +171,7 @@ pub fn render_html_body(input: &RenderInput) -> String {
         {alerts_html}
         <tr>
           <td style="padding:20px 24px;border-bottom:1px solid #E2E8F0;">
-            <h2 style="margin:0 0 10px 0;font-size:16px;color:#0F172A;" class="gdd-card">Executive Overview</h2>
+            <h2 style="margin:0 0 10px 0;font-size:16px;color:#0F172A;" class="gdd-card">{overview_heading}</h2>
             <div style="font-size:14px;color:#334155;" class="gdd-card">{overview_html}</div>
           </td>
         </tr>
@@ -157,7 +182,7 @@ pub fn render_html_body(input: &RenderInput) -> String {
         </tr>
         <tr>
           <td style="padding:14px 24px;background-color:#F1F5F9;border-top:1px solid #E2E8F0;font-size:12px;color:#475569;" class="gdd-card gdd-muted">
-            Model: <strong>{model_used}</strong>{degraded_label} &middot; Tokens: {prompt_tokens} prompt / {completion_tokens} completion
+            {footer_text}
           </td>
         </tr>
       </table>
@@ -183,7 +208,7 @@ fn render_priority_badge(priority: AlertPriority) -> &'static str {
     }
 }
 
-fn render_alerts_section(alerts: &[ProcessedItem]) -> String {
+fn render_alerts_section(alerts: &[ProcessedItem], zh_mode: bool) -> String {
     if alerts.is_empty() {
         return String::new();
     }
@@ -191,25 +216,33 @@ fn render_alerts_section(alerts: &[ProcessedItem]) -> String {
     for item in alerts {
         rows.push_str(&render_item_card(item));
     }
+    let heading = if zh_mode {
+        format!("重点与紧急提醒 ({})", alerts.len())
+    } else {
+        format!("Urgent &amp; High Alert Highlights ({})", alerts.len())
+    };
     format!(
         r#"<tr>
           <td style="padding:18px 24px;border-bottom:1px solid #E2E8F0;">
             <table role="presentation" width="100%" cellspacing="0" cellpadding="0" class="gdd-alert-box" style="background-color:#FFF7ED;border:1px solid #FDBA74;border-radius:8px;padding:12px 14px;">
               <tr><td>
-                <h2 style="margin:0 0 10px 0;font-size:15px;color:#9A3412;">Urgent &amp; High Alert Highlights ({count})</h2>
+                <h2 style="margin:0 0 10px 0;font-size:15px;color:#9A3412;">{heading}</h2>
                 {rows}
               </td></tr>
             </table>
           </td>
-        </tr>"#,
-        count = alerts.len()
+        </tr>"#
     )
 }
 
-fn render_overview_paragraphs(markdown: &str) -> String {
+fn render_overview_paragraphs(markdown: &str, zh_mode: bool) -> String {
     let trimmed = markdown.trim();
     if trimmed.is_empty() {
-        return "<p style=\"margin:0;\">No overview available.</p>".to_owned();
+        return if zh_mode {
+            "<p style=\"margin:0;\">暂无综述。</p>".to_owned()
+        } else {
+            "<p style=\"margin:0;\">No overview available.</p>".to_owned()
+        };
     }
     let mut out = String::new();
     for line in trimmed.lines() {
@@ -223,12 +256,12 @@ fn render_overview_paragraphs(markdown: &str) -> String {
     out
 }
 
-fn render_sections_html(sections: &[DigestSection]) -> String {
+fn render_sections_html(sections: &[DigestSection], zh_mode: bool) -> String {
     let mut out = String::new();
     for section in sections {
         let source_name = escape_html(&section.source_name);
         let category = escape_html(&section.category);
-        let summary_html = render_overview_paragraphs(&section.summary_markdown);
+        let summary_html = render_overview_paragraphs(&section.summary_markdown, zh_mode);
         let mut points_html = String::new();
         if !section.key_points.is_empty() {
             points_html
@@ -258,12 +291,21 @@ fn render_sections_html(sections: &[DigestSection]) -> String {
     out
 }
 
-fn render_flat_items_section(items: &[ProcessedItem]) -> String {
+fn render_flat_items_section(items: &[ProcessedItem], zh_mode: bool) -> String {
     if items.is_empty() {
-        return r#"<p style="margin:0;font-size:13px;color:#64748B;" class="gdd-muted">No items collected for this period.</p>"#.to_owned();
+        return if zh_mode {
+            r#"<p style="margin:0;font-size:13px;color:#64748B;" class="gdd-muted">本周期内暂无新增采集条目。</p>"#.to_owned()
+        } else {
+            r#"<p style="margin:0;font-size:13px;color:#64748B;" class="gdd-muted">No items collected for this period.</p>"#.to_owned()
+        };
     }
-    let mut out = String::from(
-        r#"<h2 style="margin:0 0 12px 0;font-size:16px;color:#0F172A;" class="gdd-card">Collected Updates</h2>"#,
+    let heading = if zh_mode {
+        "采集条目"
+    } else {
+        "Collected Updates"
+    };
+    let mut out = format!(
+        r#"<h2 style="margin:0 0 12px 0;font-size:16px;color:#0F172A;" class="gdd-card">{heading}</h2>"#,
     );
     for item in items {
         out.push_str(&render_item_card(item));

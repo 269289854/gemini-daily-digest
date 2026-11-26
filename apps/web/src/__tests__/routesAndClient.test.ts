@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { ApiError, buildApiUrl, createApiClient, normalizeBaseUrl } from '../api/client';
 import { API_ROUTES, HTTP_HEADERS } from '../constants/routes';
-import { ErrorCode } from '../types/enums';
+import { ErrorCode, Locale } from '../types/enums';
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -260,5 +260,28 @@ describe('API_ROUTES, URL helpers, and ApiClient', () => {
     expect(refreshAgain).toHaveBeenCalledTimes(1);
     expect(always401Fetch).toHaveBeenCalledTimes(2);
     expect(onUnauth2).toHaveBeenCalledTimes(1);
+
+    // Preferences update uses PUT /api/v1/me/preferences
+    const prefFetch = vi.fn<typeof fetch>(async () =>
+      jsonResponse({
+        id: 'u1',
+        oidcSub: 'sub-1',
+        email: 'reader@example.com',
+        displayName: 'Reader',
+        role: 'member',
+        preferredLocale: Locale.ZH_CN,
+        createdAt: '2026-11-26T00:00:00Z',
+        lastLoginAt: null,
+      }),
+    );
+    const prefClient = createApiClient({
+      getBaseUrl: () => '',
+      getAccessToken: () => 'tok-1',
+      fetchImpl: prefFetch,
+    });
+    const updatedUser = await prefClient.updateUserPreferences({ preferredLocale: Locale.ZH_CN });
+    expect(updatedUser.preferredLocale).toBe(Locale.ZH_CN);
+    expect(prefFetch.mock.calls[0][0]).toBe('/api/v1/me/preferences');
+    expect(prefFetch.mock.calls[0][1]?.method).toBe('PUT');
   });
 });

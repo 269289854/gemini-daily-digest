@@ -14,7 +14,8 @@ use crate::constants::{
     LLM_CHAT_COMPLETIONS_SUFFIX, LLM_MODELS_PATH, LLM_MODELS_SUFFIX,
 };
 use crate::domain::{
-    DailyDigestSynthesisInput, ProcessedItem, SourceDigestInput, SourceSummaryResult, UserAiConfig,
+    default_digest_locale, is_zh_locale, DailyDigestSynthesisInput, ProcessedItem,
+    SourceDigestInput, SourceSummaryResult, UserAiConfig,
 };
 use crate::error::CoreError;
 use crate::http::{read_response_bytes_capped, shared_http_client};
@@ -157,10 +158,21 @@ impl OpenAiCompatProvider {
             ));
         }
 
-        let effective_system = if system_prompt.trim().is_empty() {
+        let base_system = if system_prompt.trim().is_empty() {
             self.tuning.default_system_prompt.as_str()
         } else {
             system_prompt.trim()
+        };
+        let effective_system = if max_tokens_override == Some(TEST_CONNECTION_MAX_TOKENS) {
+            base_system.to_owned()
+        } else if is_zh_locale(&config.output_language) {
+            format!(
+                "{base_system}\n\nLanguage Requirement: Write all headings, summaries, and bullet points in Simplified Chinese (简体中文). Keep proper nouns, product/model names, code identifiers, and URLs in their original form."
+            )
+        } else {
+            format!(
+                "{base_system}\n\nLanguage Requirement: Write all headings, summaries, and bullet points in English."
+            )
         };
 
         let request_body = ChatCompletionRequest {
@@ -168,7 +180,7 @@ impl OpenAiCompatProvider {
             messages: vec![
                 ChatMessage {
                     role: "system",
-                    content: effective_system,
+                    content: &effective_system,
                 },
                 ChatMessage {
                     role: "user",
@@ -250,6 +262,7 @@ impl LlmProvider for OpenAiCompatProvider {
             system_prompt: self.tuning.default_system_prompt.clone(),
             temperature: self.tuning.default_temperature,
             max_tokens: self.tuning.default_max_tokens,
+            output_language: default_digest_locale(),
         });
         if !system_prompt.trim().is_empty() {
             config.system_prompt = system_prompt.trim().to_owned();
@@ -308,6 +321,8 @@ impl StructuredLlmProvider for OpenAiCompatProvider {
             &input.items,
         );
 
+        let zh_mode = is_zh_locale(&config.output_language);
+
         if input.items.is_empty() {
             return Ok(SourceSummaryResult {
                 source_id: input.source.id,
@@ -315,10 +330,17 @@ impl StructuredLlmProvider for OpenAiCompatProvider {
                 category: input.source.category.clone(),
                 digest_date: input.digest_date,
                 input_fingerprint: fingerprint,
-                summary_markdown: format!(
-                    "No new items from {} on {}.",
-                    input.source.name, input.digest_date
-                ),
+                summary_markdown: if zh_mode {
+                    format!(
+                        "{} 在 {} 暂无新增内容。",
+                        input.source.name, input.digest_date
+                    )
+                } else {
+                    format!(
+                        "No new items from {} on {}.",
+                        input.source.name, input.digest_date
+                    )
+                },
                 key_points: Vec::new(),
                 item_count: 0,
                 prompt_tokens: 0,
@@ -329,14 +351,25 @@ impl StructuredLlmProvider for OpenAiCompatProvider {
         }
 
         let mut prompt_lines = Vec::new();
-        prompt_lines.push(format!(
-            "Source: {} (category: {}, date: {})",
-            input.source.name, input.source.category, input.digest_date
-        ));
-        prompt_lines.push(
-            "Produce a concise Markdown summary and up to 5 bullet key points grounded only in these items. You may reply with JSON {\"summaryMarkdown\": \"...\", \"keyPoints\": [\"...\"]} or Markdown bullets."
-                .to_owned(),
-        );
+        if zh_mode {
+            prompt_lines.push(format!(
+                "信息源: {} (分类: {}, 日期: {})",
+                input.source.name, input.source.category, input.digest_date
+            ));
+            prompt_lines.push(
+                "请严格基于以下条目使用简体中文输出简洁的 Markdown 总结和最多 5 条要点。可以返回 JSON {\"summaryMarkdown\": \"...\", \"keyPoints\": [\"...\"]} 或 Markdown 列表（专有名词、模型名和链接保持原文）。"
+                    .to_owned(),
+            );
+        } else {
+            prompt_lines.push(format!(
+                "Source: {} (category: {}, date: {})",
+                input.source.name, input.source.category, input.digest_date
+            ));
+            prompt_lines.push(
+                "Produce a concise Markdown summary and up to 5 bullet key points in English grounded only in these items. You may reply with JSON {\"summaryMarkdown\": \"...\", \"keyPoints\": [\"...\"]} or Markdown bullets."
+                    .to_owned(),
+            );
+        }
         for (idx, item) in input
             .items
             .iter()
@@ -378,16 +411,30 @@ impl StructuredLlmProvider for OpenAiCompatProvider {
         config: &UserAiConfig,
         input: &DailyDigestSynthesisInput,
     ) -> Result<SummarizedDigest, CoreError> {
+        let zh_mode = is_zh_locale(&config.output_language);
         let mut prompt_lines = Vec::new();
-        prompt_lines.push(format!(
-            "Synthesize the daily executive digest for {} ({} total item(s), {} highlighted alert(s)).",
-            input.digest_date,
-            input.all_items.len(),
-            input.highlighted_items.len()
-        ));
+        if zh_mode {
+            prompt_lines.push(format!(
+                "请为 {} 生成简体中文的每日情报综述（共 {} 条更新，{} 条重点提醒）。请使用清晰的 Markdown 小标题与要点，专有名词/模型名称/链接保持原文。",
+                input.digest_date,
+                input.all_items.len(),
+                input.highlighted_items.len()
+            ));
+        } else {
+            prompt_lines.push(format!(
+                "Synthesize the daily executive digest in English for {} ({} total item(s), {} highlighted alert(s)).",
+                input.digest_date,
+                input.all_items.len(),
+                input.highlighted_items.len()
+            ));
+        }
 
         if !input.highlighted_items.is_empty() {
-            prompt_lines.push("\nHighlighted Alerts:".to_owned());
+            prompt_lines.push(if zh_mode {
+                "\n重点关注提醒:".to_owned()
+            } else {
+                "\nHighlighted Alerts:".to_owned()
+            });
             for (idx, item) in input
                 .highlighted_items
                 .iter()
@@ -399,7 +446,11 @@ impl StructuredLlmProvider for OpenAiCompatProvider {
         }
 
         if !input.source_summaries.is_empty() {
-            prompt_lines.push("\nPer-Source Summaries:".to_owned());
+            prompt_lines.push(if zh_mode {
+                "\n各信息源分项汇总:".to_owned()
+            } else {
+                "\nPer-Source Summaries:".to_owned()
+            });
             for summary in &input.source_summaries {
                 prompt_lines.push(format!(
                     "## {} ({}, {} items)\n{}",
@@ -410,7 +461,11 @@ impl StructuredLlmProvider for OpenAiCompatProvider {
                 ));
             }
         } else if !input.all_items.is_empty() {
-            prompt_lines.push("\nCollected Items:".to_owned());
+            prompt_lines.push(if zh_mode {
+                "\n采集条目列表:".to_owned()
+            } else {
+                "\nCollected Items:".to_owned()
+            });
             for (idx, item) in input
                 .all_items
                 .iter()
@@ -431,7 +486,11 @@ impl StructuredLlmProvider for OpenAiCompatProvider {
             .await?;
 
         Ok(SummarizedDigest {
-            title: format!("Gemini Daily Digest — {}", input.digest_date),
+            title: if zh_mode {
+                format!("Gemini 每日情报汇总 — {}", input.digest_date)
+            } else {
+                format!("Gemini Daily Digest — {}", input.digest_date)
+            },
             overview_markdown: output.content,
             prompt_tokens: output.prompt_tokens,
             completion_tokens: output.completion_tokens,

@@ -67,6 +67,7 @@ mod tests {
             system_prompt: "Summarize accurately.".to_owned(),
             temperature: 0.2,
             max_tokens: 1024,
+            output_language: "en-US".to_owned(),
         }
     }
 
@@ -143,6 +144,12 @@ mod tests {
         cfg_different_model.model = "other-model".to_owned();
         let fp3 = compute_input_fingerprint(date, &cfg_different_model, &[]);
         assert_ne!(fp1, fp3);
+
+        let mut cfg_zh = cfg1.clone();
+        cfg_zh.output_language = "zh-CN".to_owned();
+        let fp_en_empty = compute_input_fingerprint(date, &cfg1, &[]);
+        let fp_zh_empty = compute_input_fingerprint(date, &cfg_zh, &[]);
+        assert_ne!(fp_en_empty, fp_zh_empty);
     }
 
     #[tokio::test]
@@ -221,6 +228,64 @@ mod tests {
         assert!(daily.overview_markdown.contains("Executive Summary"));
 
         provider.test_connection(&config_no_v1).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn openai_compat_honors_zh_cn_and_en_us_output_language() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(|req: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                let sys = body["messages"][0]["content"].as_str().unwrap_or("");
+                let content = if sys.contains("Simplified Chinese") {
+                    "## 今日核心综述\n- Gemini 2.5 更新已发布。"
+                } else {
+                    "## Executive Summary\n- Gemini 2.5 update shipped."
+                };
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "model": "deepseek-chat",
+                    "choices": [{ "message": { "content": content } }],
+                    "usage": { "prompt_tokens": 50, "completion_tokens": 25 }
+                }))
+            })
+            .mount(&server)
+            .await;
+
+        let provider = OpenAiCompatProvider::new(
+            reqwest::Client::new(),
+            SsrfGuard::new(vec!["127.0.0.1".to_owned()]),
+        );
+        let date = NaiveDate::from_ymd_opt(2026, 11, 26).unwrap();
+        let item = sample_item(
+            "Gemini 2.5 Update",
+            "https://example.com/update",
+            "hash-zh",
+            AlertPriority::High,
+        );
+        let daily_input = DailyDigestSynthesisInput {
+            digest_date: date,
+            source_summaries: Vec::new(),
+            highlighted_items: vec![item.clone()],
+            all_items: vec![item],
+        };
+
+        let mut zh_cfg = sample_ai_config(&server.uri());
+        zh_cfg.output_language = "zh-CN".to_owned();
+        let zh_digest = provider
+            .synthesize_daily(&zh_cfg, &daily_input)
+            .await
+            .unwrap();
+        assert_eq!(zh_digest.title, "Gemini 每日情报汇总 — 2026-11-26");
+        assert!(zh_digest.overview_markdown.contains("今日核心综述"));
+
+        let en_cfg = sample_ai_config(&server.uri());
+        let en_digest = provider
+            .synthesize_daily(&en_cfg, &daily_input)
+            .await
+            .unwrap();
+        assert_eq!(en_digest.title, "Gemini Daily Digest — 2026-11-26");
+        assert!(en_digest.overview_markdown.contains("Executive Summary"));
     }
 
     #[tokio::test]

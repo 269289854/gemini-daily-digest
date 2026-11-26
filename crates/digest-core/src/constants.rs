@@ -20,6 +20,11 @@ pub const DEFAULT_PUBLIC_BASE_URL: &str = "http://localhost:5173";
 /// Default user schedule IANA timezone.
 pub const DEFAULT_TIMEZONE: &str = "Asia/Shanghai";
 
+/// Supported digest localization identifiers and safe default.
+pub const LOCALE_EN_US: &str = "en-US";
+pub const LOCALE_ZH_CN: &str = "zh-CN";
+pub const DEFAULT_DIGEST_LOCALE: &str = LOCALE_EN_US;
+
 /// Default daily digest trigger time (`HH:MM`).
 pub const DEFAULT_DAILY_TIME: &str = "08:30";
 

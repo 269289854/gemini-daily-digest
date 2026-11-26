@@ -11,7 +11,8 @@ use uuid::Uuid;
 use crate::cache::CacheCoordinator;
 use crate::constants::{CACHE_DIGEST_FINGERPRINT_NAMESPACE, DEFAULT_DIGEST_FINGERPRINT_TTL_SECS};
 use crate::domain::{
-    DailyDigestSynthesisInput, ProcessedItem, SourceDigestInput, SourceSummaryResult, UserAiConfig,
+    normalize_digest_locale, DailyDigestSynthesisInput, ProcessedItem, SourceDigestInput,
+    SourceSummaryResult, UserAiConfig,
 };
 use crate::error::CoreError;
 use crate::llm::fallback::DeterministicFallbackSummarizer;
@@ -69,6 +70,11 @@ fn compute_fingerprint_with_scope(
         &mut hasher,
         b"system_prompt",
         ai_config.system_prompt.trim().as_bytes(),
+    );
+    hash_field(
+        &mut hasher,
+        b"output_language",
+        normalize_digest_locale(&ai_config.output_language).as_bytes(),
     );
 
     let count_bytes = (keys.len() as u64).to_le_bytes();

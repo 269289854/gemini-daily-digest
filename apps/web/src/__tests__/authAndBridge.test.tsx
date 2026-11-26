@@ -1015,4 +1015,41 @@ describe('PlatformBridge, OIDC PKCE helpers, AuthCallbackPage, and AuthProvider'
       vi.useRealTimers();
     }
   });
+
+  it('suppresses HTML fallback JSON parse error in Desktop runtime when Server Base URL is empty', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      new Response('<!DOCTYPE html><html><body>SPA</body></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      }),
+    );
+    const desktopBridge: PlatformBridge = {
+      runtime: PlatformRuntime.DESKTOP,
+      openExternalUrl: vi.fn().mockResolvedValue(undefined),
+      notify: vi.fn().mockResolvedValue(undefined),
+      copyToClipboard: vi.fn().mockResolvedValue(undefined),
+      getServerBaseUrl: vi.fn().mockReturnValue(''),
+      setServerBaseUrl: vi.fn(),
+      getMcpConfig: vi.fn().mockReturnValue({ mode: McpAccessMode.READ_ONLY, port: 8765 }),
+      setMcpConfig: vi.fn(),
+      syncRuntimeSession: vi.fn().mockResolvedValue(undefined),
+    };
+
+    render(
+      <AuthProvider bridge={desktopBridge} fetchImpl={fetchMock}>
+        <AuthStatusProbe />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('loading').textContent).toBe('false');
+    });
+    expect(screen.getByTestId('authed').textContent).toBe('false');
+    expect(screen.getByTestId('error').textContent).toBe('none');
+
+    screen.getByRole('button', { name: /Trigger Login/i }).click();
+    await waitFor(() => {
+      expect(screen.getByTestId('error').textContent).toMatch(/Server Base URL/i);
+    });
+  });
 });

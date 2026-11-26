@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use crate::constants::FALLBACK_MODEL_LABEL;
 use crate::domain::{
-    AlertPriority, DailyDigestSynthesisInput, ProcessedItem, SourceDigestInput,
+    is_zh_locale, AlertPriority, DailyDigestSynthesisInput, ProcessedItem, SourceDigestInput,
     SourceSummaryResult, UserAiConfig,
 };
 use crate::error::CoreError;
@@ -90,27 +90,51 @@ impl StructuredLlmProvider for DeterministicFallbackSummarizer {
             .map(format_key_point)
             .collect();
 
+        let zh_mode = is_zh_locale(&config.output_language);
         let summary_markdown = if sorted_items.is_empty() {
-            format!(
-                "No new items collected from **{}** on {}.",
-                input.source.name, input.digest_date
-            )
+            if zh_mode {
+                format!(
+                    "**{}** 在 {} 暂无新增内容。",
+                    input.source.name, input.digest_date
+                )
+            } else {
+                format!(
+                    "No new items collected from **{}** on {}.",
+                    input.source.name, input.digest_date
+                )
+            }
         } else {
             let mut lines = Vec::new();
-            lines.push(format!(
-                "**{}** ({}) — {} item(s) collected:",
-                input.source.name,
-                input.source.category,
-                sorted_items.len()
-            ));
+            lines.push(if zh_mode {
+                format!(
+                    "**{}** ({}) — 共采集 {} 条更新：",
+                    input.source.name,
+                    input.source.category,
+                    sorted_items.len()
+                )
+            } else {
+                format!(
+                    "**{}** ({}) — {} item(s) collected:",
+                    input.source.name,
+                    input.source.category,
+                    sorted_items.len()
+                )
+            });
             for item in sorted_items.iter().take(MAX_FALLBACK_ITEMS_PER_SECTION) {
                 lines.push(format_markdown_bullet(item));
             }
             if sorted_items.len() > MAX_FALLBACK_ITEMS_PER_SECTION {
-                lines.push(format!(
-                    "- ...and {} additional item(s).",
-                    sorted_items.len() - MAX_FALLBACK_ITEMS_PER_SECTION
-                ));
+                lines.push(if zh_mode {
+                    format!(
+                        "- ...以及另外 {} 条更新。",
+                        sorted_items.len() - MAX_FALLBACK_ITEMS_PER_SECTION
+                    )
+                } else {
+                    format!(
+                        "- ...and {} additional item(s).",
+                        sorted_items.len() - MAX_FALLBACK_ITEMS_PER_SECTION
+                    )
+                });
             }
             lines.join("\n")
         };
@@ -137,17 +161,31 @@ impl StructuredLlmProvider for DeterministicFallbackSummarizer {
         input: &DailyDigestSynthesisInput,
     ) -> Result<SummarizedDigest, CoreError> {
         let _fp = compute_input_fingerprint(input.digest_date, config, &input.all_items);
+        let zh_mode = is_zh_locale(&config.output_language);
         let mut lines = Vec::new();
-        lines.push(format!(
-            "Deterministic summary for **{}** ({} total item(s), {} highlighted alert(s)).",
-            input.digest_date,
-            input.all_items.len(),
-            input.highlighted_items.len()
-        ));
+        lines.push(if zh_mode {
+            format!(
+                "**{}** 离线汇总（共 {} 条更新，{} 条重点提醒）。",
+                input.digest_date,
+                input.all_items.len(),
+                input.highlighted_items.len()
+            )
+        } else {
+            format!(
+                "Deterministic summary for **{}** ({} total item(s), {} highlighted alert(s)).",
+                input.digest_date,
+                input.all_items.len(),
+                input.highlighted_items.len()
+            )
+        });
 
         if !input.highlighted_items.is_empty() {
             lines.push(String::new());
-            lines.push("### Watchlist Alerts".to_owned());
+            lines.push(if zh_mode {
+                "### 重点关注提醒".to_owned()
+            } else {
+                "### Watchlist Alerts".to_owned()
+            });
             let mut alerts = input.highlighted_items.clone();
             sort_items_for_digest(&mut alerts);
             for item in alerts.iter().take(MAX_FALLBACK_ITEMS_PER_SECTION) {
@@ -157,7 +195,11 @@ impl StructuredLlmProvider for DeterministicFallbackSummarizer {
 
         if !input.source_summaries.is_empty() {
             lines.push(String::new());
-            lines.push("### Source Highlights".to_owned());
+            lines.push(if zh_mode {
+                "### 各来源要点".to_owned()
+            } else {
+                "### Source Highlights".to_owned()
+            });
             let mut by_category: BTreeMap<&str, Vec<&SourceSummaryResult>> = BTreeMap::new();
             for summary in &input.source_summaries {
                 by_category
@@ -168,20 +210,36 @@ impl StructuredLlmProvider for DeterministicFallbackSummarizer {
             for (category, summaries) in by_category {
                 lines.push(format!("- **{category}**:"));
                 for summary in summaries {
-                    let first_point = summary
-                        .key_points
-                        .first()
-                        .map(String::as_str)
-                        .unwrap_or("No highlights");
-                    lines.push(format!(
-                        "  - {} ({} item(s)): {}",
-                        summary.source_name, summary.item_count, first_point
-                    ));
+                    let first_point =
+                        summary
+                            .key_points
+                            .first()
+                            .map(String::as_str)
+                            .unwrap_or(if zh_mode {
+                                "暂无要点"
+                            } else {
+                                "No highlights"
+                            });
+                    lines.push(if zh_mode {
+                        format!(
+                            "  - {} ({} 条): {}",
+                            summary.source_name, summary.item_count, first_point
+                        )
+                    } else {
+                        format!(
+                            "  - {} ({} item(s)): {}",
+                            summary.source_name, summary.item_count, first_point
+                        )
+                    });
                 }
             }
         } else if !input.all_items.is_empty() {
             lines.push(String::new());
-            lines.push("### Top Updates".to_owned());
+            lines.push(if zh_mode {
+                "### 最新动态".to_owned()
+            } else {
+                "### Top Updates".to_owned()
+            });
             let mut top_items = input.all_items.clone();
             sort_items_for_digest(&mut top_items);
             for item in top_items.iter().take(MAX_FALLBACK_ITEMS_PER_SECTION) {
@@ -190,7 +248,11 @@ impl StructuredLlmProvider for DeterministicFallbackSummarizer {
         }
 
         Ok(SummarizedDigest {
-            title: format!("Gemini Daily Digest — {}", input.digest_date),
+            title: if zh_mode {
+                format!("Gemini 每日情报汇总 — {}", input.digest_date)
+            } else {
+                format!("Gemini Daily Digest — {}", input.digest_date)
+            },
             overview_markdown: lines.join("\n"),
             prompt_tokens: 0,
             completion_tokens: 0,

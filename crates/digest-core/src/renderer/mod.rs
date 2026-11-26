@@ -10,7 +10,9 @@ pub use html_email::HtmlEmailDigestRenderer;
 pub use markdown::MarkdownDigestRenderer;
 pub use plain_text::PlainTextDigestRenderer;
 
-use crate::domain::{AlertPriority, ItemMatchResult, ProcessedItem, RenderInput};
+use crate::domain::{
+    default_digest_locale, is_zh_locale, AlertPriority, ItemMatchResult, ProcessedItem, RenderInput,
+};
 use crate::error::CoreError;
 use crate::traits::{DigestRenderer, RawCollectedItem, RenderedNotification, SummarizedDigest};
 
@@ -79,10 +81,12 @@ impl DigestRenderer for RendererRegistry {
 
 pub(crate) fn format_subject(input: &RenderInput) -> String {
     let base = input.digest.title.trim();
-    match input.priority {
-        AlertPriority::Urgent => format!("[URGENT] {base}"),
-        AlertPriority::High => format!("[HIGH] {base}"),
-        AlertPriority::Normal => base.to_owned(),
+    match (input.priority, is_zh_locale(&input.locale)) {
+        (AlertPriority::Urgent, true) => format!("[紧急] {base}"),
+        (AlertPriority::High, true) => format!("[重要] {base}"),
+        (AlertPriority::Urgent, false) => format!("[URGENT] {base}"),
+        (AlertPriority::High, false) => format!("[HIGH] {base}"),
+        (AlertPriority::Normal, _) => base.to_owned(),
     }
 }
 
@@ -126,6 +130,7 @@ pub(crate) fn build_render_input_from_raw(
         highlighted_items,
         all_items,
         priority,
+        locale: default_digest_locale(),
     }
 }
 
@@ -198,6 +203,7 @@ mod tests {
             highlighted_items: vec![xss_item.clone()],
             all_items: vec![safe_item, xss_item],
             priority: AlertPriority::Urgent,
+            locale: default_digest_locale(),
         }
     }
 
@@ -714,5 +720,22 @@ mod tests {
                 assert_commonmark_ast_safe(candidate, opts);
             }
         }
+    }
+
+    #[test]
+    fn zh_cn_renderers_localize_headings_subjects_and_footer() {
+        let mut input = sample_render_input();
+        input.locale = "zh-CN".to_owned();
+        input.digest.title = "Gemini 每日情报汇总 — 2026-11-26".to_owned();
+        input.digest.degraded_fallback = true;
+
+        let rendered = RendererRegistry::new().render_structured(&input).unwrap();
+        assert!(rendered.subject.starts_with("[紧急] Gemini 每日情报汇总"));
+        assert!(rendered.markdown_body.contains("## 核心综述"));
+        assert!(rendered.markdown_body.contains("## 重点关注提醒"));
+        assert!(rendered.markdown_body.contains("## 各来源独立汇总"));
+        assert!(rendered.text_body.contains("核心综述"));
+        assert!(rendered.html_body.contains(r#"<html lang="zh-CN">"#));
+        assert!(rendered.html_body.contains("每日 AI 生态情报"));
     }
 }

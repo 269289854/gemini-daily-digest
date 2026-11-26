@@ -1,6 +1,6 @@
 //! Plain-text digest renderer for email text/plain parts and IM fallback channels.
 
-use crate::domain::{AlertPriority, RenderInput};
+use crate::domain::{is_zh_locale, AlertPriority, RenderInput};
 use crate::error::CoreError;
 use crate::renderer::html_email::{render_html_body, sanitize_http_url};
 use crate::renderer::markdown::render_markdown_body;
@@ -50,31 +50,47 @@ impl DigestRenderer for PlainTextDigestRenderer {
 /// Renders plain-text output for a `RenderInput`.
 #[must_use]
 pub fn render_plain_text_body(input: &RenderInput) -> String {
+    let zh_mode = is_zh_locale(&input.locale);
     let mut lines = Vec::new();
     lines.push(input.digest.title.trim().to_owned());
-    lines.push(format!(
-        "Date: {} | Priority: {}",
-        input.digest_date,
-        input.priority.as_str().to_uppercase()
-    ));
+    lines.push(if zh_mode {
+        format!(
+            "日期: {} | 优先级: {}",
+            input.digest_date,
+            input.priority.as_str().to_uppercase()
+        )
+    } else {
+        format!(
+            "Date: {} | Priority: {}",
+            input.digest_date,
+            input.priority.as_str().to_uppercase()
+        )
+    });
 
     if input.digest.degraded_fallback {
-        lines.push(
+        lines.push(if zh_mode {
+            "[提示] 主大模型服务暂不可用，当前展示离线降级摘要。".to_owned()
+        } else {
             "[Notice] Primary AI summarization was unavailable; showing deterministic summary."
-                .to_owned(),
-        );
+                .to_owned()
+        });
     }
 
     lines.push(String::new());
-    lines.push("EXECUTIVE OVERVIEW".to_owned());
+    lines.push(if zh_mode {
+        "核心综述".to_owned()
+    } else {
+        "EXECUTIVE OVERVIEW".to_owned()
+    });
     lines.push(input.digest.overview_markdown.trim().to_owned());
 
     if !input.highlighted_items.is_empty() {
         lines.push(String::new());
-        lines.push(format!(
-            "HIGHLIGHTED ALERTS ({})",
-            input.highlighted_items.len()
-        ));
+        lines.push(if zh_mode {
+            format!("重点关注提醒 ({})", input.highlighted_items.len())
+        } else {
+            format!("HIGHLIGHTED ALERTS ({})", input.highlighted_items.len())
+        });
         for item in &input.highlighted_items {
             lines.push(format_plain_item(item));
         }
@@ -82,7 +98,11 @@ pub fn render_plain_text_body(input: &RenderInput) -> String {
 
     if !input.sections.is_empty() {
         lines.push(String::new());
-        lines.push("PER-SOURCE SUMMARIES".to_owned());
+        lines.push(if zh_mode {
+            "各来源独立汇总".to_owned()
+        } else {
+            "PER-SOURCE SUMMARIES".to_owned()
+        });
         for section in &input.sections {
             lines.push(String::new());
             lines.push(format!("* {} [{}]", section.source_name, section.category));
@@ -98,17 +118,28 @@ pub fn render_plain_text_body(input: &RenderInput) -> String {
         }
     } else if !input.all_items.is_empty() {
         lines.push(String::new());
-        lines.push("COLLECTED ITEMS".to_owned());
+        lines.push(if zh_mode {
+            "采集条目".to_owned()
+        } else {
+            "COLLECTED ITEMS".to_owned()
+        });
         for item in &input.all_items {
             lines.push(format_plain_item(item));
         }
     }
 
     lines.push(String::new());
-    lines.push(format!(
-        "Model: {} | Tokens: {} prompt / {} completion",
-        input.digest.model_used, input.digest.prompt_tokens, input.digest.completion_tokens
-    ));
+    lines.push(if zh_mode {
+        format!(
+            "模型: {} | Token 消耗: {} 输入 / {} 输出",
+            input.digest.model_used, input.digest.prompt_tokens, input.digest.completion_tokens
+        )
+    } else {
+        format!(
+            "Model: {} | Tokens: {} prompt / {} completion",
+            input.digest.model_used, input.digest.prompt_tokens, input.digest.completion_tokens
+        )
+    });
 
     lines.join("\n")
 }

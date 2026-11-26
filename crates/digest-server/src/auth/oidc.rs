@@ -414,12 +414,16 @@ mod tests {
                 email: cmd.email,
                 display_name: cmd.display_name,
                 role: cmd.role,
+                preferred_locale: digest_core::domain::default_digest_locale(),
                 created_at: Utc::now(),
                 last_login_at: Some(Utc::now()),
             })
         }
         async fn get_user_by_id(&self, _: Uuid) -> Result<Option<UserRecord>, CoreError> {
             Ok(None)
+        }
+        async fn update_user_locale(&self, _: Uuid, _: &str) -> Result<UserRecord, CoreError> {
+            Err(CoreError::NotFound("stub".to_owned()))
         }
         async fn get_onboarding_flags(&self, _: Uuid) -> Result<OnboardingFlags, CoreError> {
             Ok(OnboardingFlags::default())

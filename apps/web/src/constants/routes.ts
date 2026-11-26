@@ -9,6 +9,7 @@ export const API_ROUTES = {
   HEALTH: '/health',
   AUTH_CONFIG: `${API_PREFIX}/auth/config`,
   ME: `${API_PREFIX}/me`,
+  ME_PREFERENCES: `${API_PREFIX}/me/preferences`,
   DIGESTS: `${API_PREFIX}/digests`,
   digestByDate: (date: string) => `${API_PREFIX}/digests/${encodeURIComponent(date)}`,
   digestMarkdown: (date: string) => `${API_PREFIX}/digests/${encodeURIComponent(date)}/markdown`,

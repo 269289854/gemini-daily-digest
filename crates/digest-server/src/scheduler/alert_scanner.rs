@@ -360,6 +360,7 @@ async fn render_alert_notification_blocking(
         highlighted_items: processed.clone(),
         all_items: processed,
         priority: highest_priority,
+        locale: digest_core::domain::default_digest_locale(),
     };
 
     tokio::task::spawn_blocking(move || renderer.render_structured(&render_input))

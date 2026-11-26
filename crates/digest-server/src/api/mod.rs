@@ -27,10 +27,11 @@ use crate::constants::{
     SUBROUTE_ADMIN_PLATFORM, SUBROUTE_ADMIN_PLATFORM_X_TEST, SUBROUTE_AUTH_CONFIG,
     SUBROUTE_BOOKMARKS, SUBROUTE_BOOKMARK_BY_ITEM, SUBROUTE_DELIVERY_RESEND, SUBROUTE_DIGESTS,
     SUBROUTE_DIGEST_BY_DATE, SUBROUTE_DIGEST_MARKDOWN, SUBROUTE_EVENTS_STREAM, SUBROUTE_ITEMS,
-    SUBROUTE_ME, SUBROUTE_RUNS, SUBROUTE_RUNS_STATS, SUBROUTE_RUNS_TRIGGER, SUBROUTE_SETTINGS_AI,
-    SUBROUTE_SETTINGS_AI_MODELS, SUBROUTE_SETTINGS_AI_TEST, SUBROUTE_SETTINGS_CHANNELS,
-    SUBROUTE_SETTINGS_CHANNEL_BY_ID, SUBROUTE_SETTINGS_CHANNEL_TEST, SUBROUTE_SETTINGS_SCHEDULE,
-    SUBROUTE_SETTINGS_SOURCES, SUBROUTE_SETTINGS_SOURCES_EXPORT, SUBROUTE_SETTINGS_SOURCES_IMPORT,
+    SUBROUTE_ME, SUBROUTE_ME_PREFERENCES, SUBROUTE_RUNS, SUBROUTE_RUNS_STATS,
+    SUBROUTE_RUNS_TRIGGER, SUBROUTE_SETTINGS_AI, SUBROUTE_SETTINGS_AI_MODELS,
+    SUBROUTE_SETTINGS_AI_TEST, SUBROUTE_SETTINGS_CHANNELS, SUBROUTE_SETTINGS_CHANNEL_BY_ID,
+    SUBROUTE_SETTINGS_CHANNEL_TEST, SUBROUTE_SETTINGS_SCHEDULE, SUBROUTE_SETTINGS_SOURCES,
+    SUBROUTE_SETTINGS_SOURCES_EXPORT, SUBROUTE_SETTINGS_SOURCES_IMPORT,
     SUBROUTE_SETTINGS_SOURCES_IMPORT_PRESET, SUBROUTE_SETTINGS_SOURCE_BY_ID,
     SUBROUTE_SETTINGS_SOURCE_TEST, SUBROUTE_SETTINGS_WATCHLIST, SUBROUTE_SETTINGS_WATCHLIST_BY_ID,
     SUBROUTE_SOURCE_DIGESTS, SUBROUTE_SOURCE_ITEMS,
@@ -65,6 +66,10 @@ pub fn router(state: AppState) -> Router {
     let api_v1 = Router::new()
         .route(SUBROUTE_AUTH_CONFIG, get(me::auth_config))
         .route(SUBROUTE_ME, get(me::get_me))
+        .route(
+            SUBROUTE_ME_PREFERENCES,
+            axum::routing::put(me::update_me_preferences),
+        )
         .route(SUBROUTE_DIGESTS, get(digests::list_digests))
         .route(SUBROUTE_DIGEST_BY_DATE, get(digests::get_digest_by_date))
         .route(SUBROUTE_DIGEST_MARKDOWN, get(digests::get_digest_markdown))
@@ -237,6 +242,7 @@ mod tests {
                 email: cmd.email,
                 display_name: cmd.display_name,
                 role: cmd.role,
+                preferred_locale: digest_core::domain::default_digest_locale(),
                 created_at: Utc::now(),
                 last_login_at: Some(Utc::now()),
             };
@@ -246,6 +252,20 @@ mod tests {
 
         async fn get_user_by_id(&self, user_id: Uuid) -> Result<Option<UserRecord>, CoreError> {
             Ok(self.users.lock().await.get(&user_id).cloned())
+        }
+
+        async fn update_user_locale(
+            &self,
+            user_id: Uuid,
+            preferred_locale: &str,
+        ) -> Result<UserRecord, CoreError> {
+            let mut users = self.users.lock().await;
+            let user = users
+                .get_mut(&user_id)
+                .ok_or_else(|| CoreError::NotFound("user not found".to_owned()))?;
+            user.preferred_locale =
+                digest_core::domain::normalize_digest_locale(preferred_locale).to_owned();
+            Ok(user.clone())
         }
 
         async fn get_onboarding_flags(&self, user_id: Uuid) -> Result<OnboardingFlags, CoreError> {
