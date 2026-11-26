@@ -10,6 +10,7 @@ import {
 import type { AuthConfigResponse, OnboardingFlags, UserRecord } from '../types/api';
 import { AuthMode } from '../types/enums';
 import {
+  type OidcDiscoveryEndpoints,
   buildAuthorizeUrl,
   clearAuthSession,
   clearPkceTransaction,
@@ -18,9 +19,11 @@ import {
   exchangeCodeForToken,
   generateCodeVerifier,
   generateOidcState,
+  isPermanentOidcRefreshError,
   isTokenExpired,
   loadAuthSession,
   loadPkceTransaction,
+  refreshOidcToken,
   saveAuthSession,
   savePkceTransaction,
 } from './oidc';
@@ -39,6 +42,7 @@ export interface AuthContextValue {
   login: () => Promise<void>;
   logout: () => void;
   handleCallback: (search: string, redirectUriOverride?: string) => Promise<string>;
+  refreshAccessToken: () => Promise<string | null>;
   refreshMe: () => Promise<void>;
   updateServerBaseUrl: (url: string) => void;
 }
@@ -88,17 +92,23 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     if (!stored) {
       return null;
     }
-    if (isTokenExpired(stored.expiresAt)) {
+    if (!stored.refreshToken && isTokenExpired(stored.expiresAt)) {
       clearAuthSession();
       return null;
     }
     return stored;
   }, []);
 
+  const initialValidAccessToken =
+    initialSession && !isTokenExpired(initialSession.expiresAt) ? initialSession.accessToken : null;
+
   const initialServerBaseUrl = useMemo(() => activeBridge.getServerBaseUrl(), [activeBridge]);
 
   const [serverBaseUrl, setServerBaseUrl] = useState<string>(initialServerBaseUrl);
-  const [accessToken, setAccessToken] = useState<string | null>(initialSession?.accessToken ?? null);
+  const [accessToken, setAccessToken] = useState<string | null>(initialValidAccessToken);
+  const [tokenExpiresAt, setTokenExpiresAt] = useState<number | null>(
+    initialSession?.expiresAt ?? null,
+  );
   const [authConfig, setAuthConfig] = useState<AuthConfigResponse | null>(null);
   const [user, setUser] = useState<UserRecord | null>(null);
   const [onboarding, setOnboarding] = useState<OnboardingFlags | null>(null);
@@ -114,9 +124,19 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
   const accessTokenRef = useRef<string | null>(accessToken);
   accessTokenRef.current = accessToken;
 
+  const refreshTokenRef = useRef<string | null>(initialSession?.refreshToken ?? null);
+  const tokenExpiresAtRef = useRef<number | null>(tokenExpiresAt);
+  tokenExpiresAtRef.current = tokenExpiresAt;
+
   const authConfigRef = useRef<AuthConfigResponse | null>(authConfig);
   authConfigRef.current = authConfig;
 
+  const oidcEndpointsCacheRef = useRef<{
+    issuerUrl: string;
+    endpoints: OidcDiscoveryEndpoints;
+  } | null>(null);
+  const apiRef = useRef<ApiClient | null>(null);
+  const inFlightRefreshRef = useRef<Promise<string | null> | null>(null);
   const inFlightCallbackRef = useRef<{ search: string; promise: Promise<string> } | null>(null);
 
   const syncDesktopSession = useCallback(
@@ -140,7 +160,10 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
   const handleUnauthorized = useCallback(() => {
     clearAuthSession();
     accessTokenRef.current = null;
+    refreshTokenRef.current = null;
+    tokenExpiresAtRef.current = null;
     setAccessToken(null);
+    setTokenExpiresAt(null);
     setUser(null);
     setOnboarding(null);
     setPlatformXReady(false);
@@ -148,16 +171,89 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     syncDesktopSession(serverBaseUrlRef.current, null, authConfigRef.current?.authMode ?? null);
   }, [syncDesktopSession]);
 
+  const refreshAccessToken = useCallback(async (): Promise<string | null> => {
+    if (inFlightRefreshRef.current) {
+      return inFlightRefreshRef.current;
+    }
+
+    const promise = (async (): Promise<string | null> => {
+      const stored = loadAuthSession();
+      const activeRefreshToken = refreshTokenRef.current ?? stored?.refreshToken ?? null;
+      if (!activeRefreshToken) {
+        return null;
+      }
+
+      let config = authConfigRef.current;
+      if (!config && apiRef.current) {
+        config = await apiRef.current.getAuthConfig();
+        authConfigRef.current = config;
+        setAuthConfig(config);
+      }
+
+      if (!config || config.authMode !== AuthMode.OIDC || !config.issuerUrl || !config.clientId) {
+        return null;
+      }
+
+      let endpoints: OidcDiscoveryEndpoints;
+      if (oidcEndpointsCacheRef.current?.issuerUrl === config.issuerUrl) {
+        endpoints = oidcEndpointsCacheRef.current.endpoints;
+      } else {
+        endpoints = await discoverOidcEndpoints(config.issuerUrl, effectiveOidcFetch);
+        oidcEndpointsCacheRef.current = { issuerUrl: config.issuerUrl, endpoints };
+      }
+
+      const tokenRes = await refreshOidcToken(
+        {
+          tokenEndpoint: endpoints.tokenEndpoint,
+          clientId: config.clientId,
+          refreshToken: activeRefreshToken,
+        },
+        effectiveOidcFetch,
+      );
+
+      const saved = saveAuthSession({
+        accessToken: tokenRes.accessToken,
+        idToken: tokenRes.idToken ?? stored?.idToken ?? null,
+        refreshToken: tokenRes.refreshToken ?? activeRefreshToken,
+        expiresIn: tokenRes.expiresIn,
+      });
+
+      accessTokenRef.current = saved.accessToken;
+      refreshTokenRef.current = saved.refreshToken;
+      tokenExpiresAtRef.current = saved.expiresAt;
+      setAccessToken(saved.accessToken);
+      setTokenExpiresAt(saved.expiresAt);
+      syncDesktopSession(serverBaseUrlRef.current, saved.accessToken, config.authMode);
+      return saved.accessToken;
+    })()
+      .catch((err: unknown) => {
+        if (isPermanentOidcRefreshError(err)) {
+          handleUnauthorized();
+        }
+        return null;
+      })
+      .finally(() => {
+        if (inFlightRefreshRef.current === promise) {
+          inFlightRefreshRef.current = null;
+        }
+      });
+
+    inFlightRefreshRef.current = promise;
+    return promise;
+  }, [effectiveOidcFetch, handleUnauthorized, syncDesktopSession]);
+
   const api = useMemo(
     () =>
       createApiClient({
         getBaseUrl: () => serverBaseUrlRef.current,
         getAccessToken: () => accessTokenRef.current,
+        refreshAccessToken,
         onUnauthorized: handleUnauthorized,
         fetchImpl,
       }),
-    [fetchImpl, handleUnauthorized],
+    [fetchImpl, handleUnauthorized, refreshAccessToken],
   );
+  apiRef.current = api;
 
   const refreshMe = useCallback(async () => {
     const me = await api.getMe();
@@ -204,8 +300,39 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         }
 
         const currentSession = loadAuthSession();
-        if (!currentSession || isTokenExpired(currentSession.expiresAt)) {
+        if (!currentSession) {
           clearAuthSession();
+          accessTokenRef.current = null;
+          refreshTokenRef.current = null;
+          tokenExpiresAtRef.current = null;
+          setAccessToken(null);
+          setTokenExpiresAt(null);
+          setUser(null);
+          setOnboarding(null);
+          setIsAuthenticated(false);
+          syncDesktopSession(serverBaseUrlRef.current, null, config.authMode);
+          setIsLoading(false);
+          return;
+        }
+
+        refreshTokenRef.current = currentSession.refreshToken;
+        tokenExpiresAtRef.current = currentSession.expiresAt;
+        setTokenExpiresAt(currentSession.expiresAt);
+
+        let effectiveAccessToken: string | null = currentSession.accessToken;
+        if (isTokenExpired(currentSession.expiresAt)) {
+          if (currentSession.refreshToken) {
+            effectiveAccessToken = await refreshAccessToken();
+            if (cancelled) {
+              return;
+            }
+          } else {
+            clearAuthSession();
+            effectiveAccessToken = null;
+          }
+        }
+
+        if (!effectiveAccessToken) {
           accessTokenRef.current = null;
           setAccessToken(null);
           setUser(null);
@@ -216,8 +343,8 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
           return;
         }
 
-        accessTokenRef.current = currentSession.accessToken;
-        setAccessToken(currentSession.accessToken);
+        accessTokenRef.current = effectiveAccessToken;
+        setAccessToken(effectiveAccessToken);
         const me = await api.getMe();
         if (cancelled) {
           return;
@@ -226,7 +353,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         setOnboarding(me.onboarding);
         setPlatformXReady(Boolean(me.platformXReady));
         setIsAuthenticated(true);
-        syncDesktopSession(serverBaseUrlRef.current, currentSession.accessToken, config.authMode);
+        syncDesktopSession(serverBaseUrlRef.current, accessTokenRef.current, config.authMode);
       } catch (err) {
         if (cancelled) {
           return;
@@ -255,7 +382,58 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     return () => {
       cancelled = true;
     };
-  }, [api, initGeneration, serverBaseUrl, syncDesktopSession]);
+  }, [api, initGeneration, refreshAccessToken, serverBaseUrl, syncDesktopSession]);
+
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      authConfig?.authMode !== AuthMode.OIDC ||
+      tokenExpiresAt === null ||
+      !refreshTokenRef.current
+    ) {
+      return undefined;
+    }
+
+    const targetMs = tokenExpiresAt - DEFAULTS.OIDC_REFRESH_LEAD_SECONDS * 1000;
+    const delayMs = Math.min(
+      DEFAULTS.OIDC_REFRESH_MAX_DELAY_MS,
+      Math.max(DEFAULTS.OIDC_REFRESH_MIN_DELAY_MS, targetMs - Date.now()),
+    );
+
+    const timer = setTimeout(() => {
+      void refreshAccessToken();
+    }, delayMs);
+
+    const checkAndRefreshIfDue = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        return;
+      }
+      if (
+        tokenExpiresAtRef.current !== null &&
+        refreshTokenRef.current &&
+        isTokenExpired(tokenExpiresAtRef.current, DEFAULTS.OIDC_REFRESH_LEAD_SECONDS)
+      ) {
+        void refreshAccessToken();
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', checkAndRefreshIfDue);
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', checkAndRefreshIfDue);
+    }
+
+    return () => {
+      clearTimeout(timer);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', checkAndRefreshIfDue);
+      }
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', checkAndRefreshIfDue);
+      }
+    };
+  }, [authConfig?.authMode, isAuthenticated, refreshAccessToken, tokenExpiresAt]);
 
   const handleCallback = useCallback(
     async (search: string, redirectUriOverride?: string): Promise<string> => {
@@ -313,6 +491,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         const effectiveRedirectUri =
           redirectUriOverride ?? storedRedirectUri ?? getWebRedirectUri();
         const endpoints = await discoverOidcEndpoints(config.issuerUrl, effectiveOidcFetch);
+        oidcEndpointsCacheRef.current = { issuerUrl: config.issuerUrl, endpoints };
         const tokenRes = await exchangeCodeForToken(
           {
             tokenEndpoint: endpoints.tokenEndpoint,
@@ -327,11 +506,15 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         const saved = saveAuthSession({
           accessToken: tokenRes.accessToken,
           idToken: tokenRes.idToken,
+          refreshToken: tokenRes.refreshToken ?? null,
           expiresIn: tokenRes.expiresIn,
         });
 
         accessTokenRef.current = saved.accessToken;
+        refreshTokenRef.current = saved.refreshToken;
+        tokenExpiresAtRef.current = saved.expiresAt;
         setAccessToken(saved.accessToken);
+        setTokenExpiresAt(saved.expiresAt);
 
         const me = await api.getMe();
         setUser(me.user);
@@ -374,6 +557,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
       }
 
       const endpoints = await discoverOidcEndpoints(config.issuerUrl, effectiveOidcFetch);
+      oidcEndpointsCacheRef.current = { issuerUrl: config.issuerUrl, endpoints };
       const verifier = generateCodeVerifier();
       const state = generateOidcState();
       const codeChallenge = await computeCodeChallengeS256(verifier);
@@ -422,7 +606,10 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     clearAuthSession();
     clearPkceTransaction();
     accessTokenRef.current = null;
+    refreshTokenRef.current = null;
+    tokenExpiresAtRef.current = null;
     setAccessToken(null);
+    setTokenExpiresAt(null);
     setUser(null);
     setOnboarding(null);
     setPlatformXReady(false);
@@ -436,6 +623,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
       activeBridge.setServerBaseUrl(url);
       const normalized = activeBridge.getServerBaseUrl();
       serverBaseUrlRef.current = normalized;
+      oidcEndpointsCacheRef.current = null;
       setServerBaseUrl(normalized);
       setError(null);
       syncDesktopSession(normalized, accessTokenRef.current, authConfigRef.current?.authMode ?? null);
@@ -459,6 +647,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
       login,
       logout,
       handleCallback,
+      refreshAccessToken,
       refreshMe,
       updateServerBaseUrl,
     }),
@@ -476,6 +665,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
       login,
       logout,
       handleCallback,
+      refreshAccessToken,
       refreshMe,
       updateServerBaseUrl,
     ],

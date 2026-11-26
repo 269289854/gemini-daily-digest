@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SafeMarkdown, sanitizeHttpUrl } from '../components/SafeMarkdown';
@@ -166,6 +167,56 @@ describe('SSE parser, useSse hook, and SafeMarkdown', () => {
     });
     expect(screen.getByTestId('error').textContent).toContain('401');
 
+    cleanup();
+  });
+
+  it('triggers refreshAccessToken on SSE 401 and reconnects with updated accessToken', async () => {
+    const encoder = new TextEncoder();
+    const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+      const headers = init?.headers as Headers;
+      const auth = headers.get(HTTP_HEADERS.AUTHORIZATION);
+      if (auth === 'Bearer old-tok') {
+        return new Response('Unauthorized', { status: 401 });
+      }
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              `event: ${SseEventType.HEARTBEAT}\ndata: {"timestamp":"2026-11-26T09:00:00Z"}\n\n`,
+            ),
+          );
+        },
+      });
+      return new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+
+    function ReconnectingSseHarness() {
+      const [token, setToken] = useState('old-tok');
+      const refresh = async () => {
+        setToken('new-tok');
+        return 'new-tok';
+      };
+      return (
+        <SseHarness
+          enabled
+          baseUrl="https://digest.example.com/"
+          accessToken={token}
+          refreshAccessToken={refresh}
+          fetchImpl={fetchMock}
+        />
+      );
+    }
+
+    render(<ReconnectingSseHarness />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('status').textContent).toBe('connected');
+      expect(screen.getByTestId('heartbeat').textContent).toBe('2026-11-26T09:00:00Z');
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     cleanup();
   });
 

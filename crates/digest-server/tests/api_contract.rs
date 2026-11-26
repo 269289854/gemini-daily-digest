@@ -273,7 +273,7 @@ async fn oidc_rs256_jwks_and_dev_bypass_enforce_strict_auth_boundaries() {
     assert_eq!(cfg_json["clientId"], "digest-web-client");
     assert_eq!(
         cfg_json["scopes"],
-        serde_json::json!(["openid", "profile", "email"])
+        serde_json::json!(["openid", "profile", "email", "offline_access"])
     );
 
     let now = usize::try_from(Utc::now().timestamp()).unwrap();

@@ -36,7 +36,7 @@ pub const SUBROUTE_ADMIN_PLATFORM: &str = "/admin/platform";
 pub const SUBROUTE_ADMIN_PLATFORM_X_TEST: &str = "/admin/platform/x/test";
 
 /// Default OIDC scopes advertised by `/api/v1/auth/config`.
-pub const DEFAULT_OIDC_SCOPES: &[&str] = &["openid", "profile", "email"];
+pub const DEFAULT_OIDC_SCOPES: &[&str] = &["openid", "profile", "email", "offline_access"];
 
 /// Standard OIDC discovery document path suffix.
 pub const OIDC_WELL_KNOWN_SUFFIX: &str = "/.well-known/openid-configuration";

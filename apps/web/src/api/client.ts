@@ -79,6 +79,7 @@ export class ApiError extends Error {
 export interface ApiClientConfig {
   getBaseUrl: () => string;
   getAccessToken?: () => string | null;
+  refreshAccessToken?: () => Promise<string | null>;
   onUnauthorized?: () => void;
   fetchImpl?: typeof fetch;
 }
@@ -218,13 +219,17 @@ export function createApiClient(config: ApiClientConfig) {
     return impl;
   };
 
-  async function request<T>(opts: RequestOptions): Promise<T> {
+  async function request<T>(
+    opts: RequestOptions,
+    hasRetriedAuth = false,
+    tokenOverride?: string,
+  ): Promise<T> {
     const url = buildApiUrl(config.getBaseUrl(), opts.path, opts.query);
     const headers = new Headers();
     headers.set(HTTP_HEADERS.ACCEPT, opts.accept ?? HTTP_HEADERS.CONTENT_TYPE_JSON);
 
     if (!opts.skipAuth) {
-      const token = config.getAccessToken?.()?.trim();
+      const token = tokenOverride?.trim() || config.getAccessToken?.()?.trim();
       if (token) {
         headers.set(HTTP_HEADERS.AUTHORIZATION, `${HTTP_HEADERS.BEARER_PREFIX}${token}`);
       }
@@ -244,6 +249,17 @@ export function createApiClient(config: ApiClientConfig) {
     });
 
     if (!response.ok) {
+      if (response.status === 401 && !opts.skipAuth && !hasRetriedAuth && config.refreshAccessToken) {
+        let refreshedToken: string | null = null;
+        try {
+          refreshedToken = await config.refreshAccessToken();
+        } catch {
+          refreshedToken = null;
+        }
+        if (refreshedToken && refreshedToken.trim()) {
+          return request<T>(opts, true, refreshedToken.trim());
+        }
+      }
       const apiErr = await parseApiErrorResponse(response);
       if (response.status === 401) {
         config.onUnauthorized?.();

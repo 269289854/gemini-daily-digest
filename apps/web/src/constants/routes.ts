@@ -57,6 +57,7 @@ export const STORAGE_KEYS = {
   OIDC_REDIRECT_URI: 'gemini_digest.oidc_redirect_uri',
   ACCESS_TOKEN: 'gemini_digest.access_token',
   ID_TOKEN: 'gemini_digest.id_token',
+  REFRESH_TOKEN: 'gemini_digest.refresh_token',
   TOKEN_EXPIRES_AT: 'gemini_digest.token_expires_at',
   POST_LOGIN_REDIRECT: 'gemini_digest.post_login_redirect',
   MCP_ACCESS_MODE: 'gemini_digest.mcp_access_mode',
@@ -119,7 +120,10 @@ export const DEFAULTS = {
   PRESET_CATEGORIES: ['Official', 'Releases', 'Community', 'News', 'Social'] as const,
   SECRET_MASK_REDACTED: '****',
   SECRET_MASK_CONFIGURED: 'configured',
-  DEFAULT_OIDC_SCOPES: ['openid', 'profile', 'email'] as const,
+  DEFAULT_OIDC_SCOPES: ['openid', 'profile', 'email', 'offline_access'] as const,
+  OIDC_REFRESH_LEAD_SECONDS: 60,
+  OIDC_REFRESH_MIN_DELAY_MS: 5_000,
+  OIDC_REFRESH_MAX_DELAY_MS: 86_400_000,
 } as const;
 
 export const SSE_RUN_STAGES = {

@@ -120,7 +120,7 @@ function AuthenticatedShell({
   routeState,
   onNavigate,
 }: AuthenticatedShellProps) {
-  const { api, accessToken, serverBaseUrl, updateServerBaseUrl } = useAuth();
+  const { api, accessToken, refreshAccessToken, serverBaseUrl, updateServerBaseUrl } = useAuth();
   const { t } = useI18n();
   const [latestDigestReady, setLatestDigestReady] = useState<DigestReadyEvent | null>(null);
 
@@ -128,6 +128,7 @@ function AuthenticatedShell({
     enabled: true,
     baseUrl: serverBaseUrl,
     accessToken,
+    refreshAccessToken,
     fetchImpl,
     onDigestReady: (event) => {
       setLatestDigestReady(event);

@@ -195,4 +195,70 @@ describe('API_ROUTES, URL helpers, and ApiClient', () => {
       requestId: 'req-504',
     });
   });
+
+  it('retries once on 401 when refreshAccessToken yields a fresh token, and calls onUnauthorized only when refresh fails or retry still returns 401', async () => {
+    let activeToken = 'expired-tok';
+    const refreshAccessToken = vi.fn(async () => {
+      activeToken = 'refreshed-tok';
+      return activeToken;
+    });
+    const onUnauthorized = vi.fn();
+    const fetchMock = vi.fn<typeof fetch>(async (_input, init) => {
+      const headers = init?.headers as Headers;
+      const auth = headers.get(HTTP_HEADERS.AUTHORIZATION);
+      if (auth === 'Bearer refreshed-tok') {
+        return jsonResponse({
+          user: {
+            id: 'u1',
+            oidcSub: 'sub-1',
+            email: 'reader@example.com',
+            displayName: 'Reader',
+            role: 'user',
+            createdAt: '2026-11-26T00:00:00Z',
+            lastLoginAt: null,
+          },
+          onboarding: {
+            hasAiConfig: true,
+            hasSources: true,
+            hasChannels: false,
+            hasSchedule: true,
+          },
+        });
+      }
+      return jsonResponse({ code: ErrorCode.UNAUTHORIZED, message: 'Expired', requestId: 'r1' }, 401);
+    });
+
+    const client = createApiClient({
+      getBaseUrl: () => '',
+      getAccessToken: () => activeToken,
+      refreshAccessToken,
+      onUnauthorized,
+      fetchImpl: fetchMock,
+    });
+
+    const me = await client.getMe();
+    expect(me.user.email).toBe('reader@example.com');
+    expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+    expect(onUnauthorized).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    // Case 2: refresh succeeds with token, but server still returns 401 -> no infinite loop, triggers onUnauthorized once
+    const always401Fetch = vi.fn<typeof fetch>(async () =>
+      jsonResponse({ code: ErrorCode.UNAUTHORIZED, message: 'Still rejected', requestId: 'r2' }, 401),
+    );
+    const refreshAgain = vi.fn().mockResolvedValue('another-tok');
+    const onUnauth2 = vi.fn();
+    const client2 = createApiClient({
+      getBaseUrl: () => '',
+      getAccessToken: () => 'old-tok',
+      refreshAccessToken: refreshAgain,
+      onUnauthorized: onUnauth2,
+      fetchImpl: always401Fetch,
+    });
+
+    await expect(client2.getMe()).rejects.toMatchObject({ status: 401 });
+    expect(refreshAgain).toHaveBeenCalledTimes(1);
+    expect(always401Fetch).toHaveBeenCalledTimes(2);
+    expect(onUnauth2).toHaveBeenCalledTimes(1);
+  });
 });

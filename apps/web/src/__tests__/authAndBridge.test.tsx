@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthCallbackPage } from '../auth/AuthCallbackPage';
@@ -9,7 +10,9 @@ import {
   computeCodeChallengeS256,
   generateCodeVerifier,
   generateOidcState,
+  loadAuthSession,
   loadPkceTransaction,
+  saveAuthSession,
   savePkceTransaction,
 } from '../auth/oidc';
 import { APP_ROUTES, DEFAULTS, STORAGE_KEYS } from '../constants/routes';
@@ -29,15 +32,38 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function AuthStatusProbe() {
-  const { authConfig, isAuthenticated, isLoading, user, error, login, logout, updateServerBaseUrl } =
-    useAuth();
+  const {
+    api,
+    authConfig,
+    accessToken,
+    isAuthenticated,
+    isLoading,
+    user,
+    error,
+    login,
+    logout,
+    updateServerBaseUrl,
+  } = useAuth();
+  const [concurrentState, setConcurrentState] = useState('idle');
+
+  const triggerConcurrentCalls = async () => {
+    try {
+      const [sources, channels] = await Promise.all([api.listSources(), api.listChannels()]);
+      setConcurrentState(`ok:${sources.length}:${channels.length}`);
+    } catch (err) {
+      setConcurrentState(`err:${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   return (
     <div>
       <span data-testid="loading">{String(isLoading)}</span>
       <span data-testid="authed">{String(isAuthenticated)}</span>
       <span data-testid="mode">{authConfig?.authMode ?? 'none'}</span>
       <span data-testid="email">{user?.email ?? 'none'}</span>
+      <span data-testid="token">{accessToken ?? 'none'}</span>
       <span data-testid="error">{error ?? 'none'}</span>
+      <span data-testid="concurrent-state">{concurrentState}</span>
       <button type="button" onClick={() => void login().catch(() => {})}>
         Trigger Login
       </button>
@@ -46,6 +72,9 @@ function AuthStatusProbe() {
       </button>
       <button type="button" onClick={() => updateServerBaseUrl('https://updated.example.com/')}>
         Update Server URL
+      </button>
+      <button type="button" onClick={() => void triggerConcurrentCalls()}>
+        Trigger Concurrent Calls
       </button>
     </div>
   );
@@ -130,6 +159,7 @@ describe('PlatformBridge, OIDC PKCE helpers, AuthCallbackPage, and AuthProvider'
     const parsed = new URL(authUrl);
     expect(parsed.searchParams.get('response_type')).toBe('code');
     expect(parsed.searchParams.get('client_id')).toBe('client-abc');
+    expect(parsed.searchParams.get('scope')).toContain('offline_access');
     expect(parsed.searchParams.get('state')).toBe(state);
     expect(parsed.searchParams.get('code_challenge')).toBe(challenge);
     expect(parsed.searchParams.get('code_challenge_method')).toBe('S256');
@@ -209,6 +239,7 @@ describe('PlatformBridge, OIDC PKCE helpers, AuthCallbackPage, and AuthProvider'
         return jsonResponse({
           access_token: 'test-tok-123',
           id_token: 'id-tok-456',
+          refresh_token: 'refresh-tok-789',
           expires_in: 3600,
         });
       }
@@ -251,6 +282,7 @@ describe('PlatformBridge, OIDC PKCE helpers, AuthCallbackPage, and AuthProvider'
       expect(onSuccess).toHaveBeenCalledWith('/sources?sourceId=src-1');
     });
     expect(window.localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN)).toBe('test-tok-123');
+    expect(window.localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN)).toBe('refresh-tok-789');
   });
 
   it('auto-authenticates in DEV_BYPASS mode and stays unauthenticated in OIDC mode without token', async () => {
@@ -688,5 +720,299 @@ describe('PlatformBridge, OIDC PKCE helpers, AuthCallbackPage, and AuthProvider'
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/JWE/i);
     expect(screen.queryByText(/Completing Sign-In/i)).toBeNull();
+  });
+
+  it('silently refreshes expired access_token on bootstrap when refresh_token is stored and rotates tokens', async () => {
+    window.localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, 'expired-boot-tok');
+    window.localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, 'boot-refresh-1');
+    window.localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRES_AT, String(Date.now() - 60_000));
+
+    let refreshGrantSeen = '';
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/config')) {
+        return jsonResponse({
+          authMode: AuthMode.OIDC,
+          issuerUrl: 'https://auth.example.com/o/digest',
+          clientId: 'client-1',
+          scopes: ['openid', 'profile', 'email', 'offline_access'],
+        });
+      }
+      if (url.endsWith('/.well-known/openid-configuration')) {
+        return jsonResponse({
+          authorization_endpoint: 'https://auth.example.com/authorize',
+          token_endpoint: 'https://auth.example.com/token',
+        });
+      }
+      if (url === 'https://auth.example.com/token') {
+        const params = new URLSearchParams(typeof init?.body === 'string' ? init.body : '');
+        refreshGrantSeen = `${params.get('grant_type')}:${params.get('refresh_token')}`;
+        return jsonResponse({
+          access_token: 'boot-fresh-access',
+          refresh_token: 'boot-rotated-refresh-2',
+          expires_in: 3600,
+        });
+      }
+      if (url.endsWith('/api/v1/me')) {
+        const headers = init?.headers as Headers;
+        if (headers.get('authorization') === 'Bearer boot-fresh-access') {
+          return jsonResponse({
+            user: {
+              id: 'u-boot',
+              oidcSub: 'sub-boot',
+              email: 'boot@example.com',
+              displayName: 'Boot User',
+              role: 'admin',
+              createdAt: '2026-11-26T00:00:00Z',
+              lastLoginAt: null,
+            },
+            onboarding: {
+              hasAiConfig: true,
+              hasSources: true,
+              hasChannels: true,
+              hasSchedule: true,
+            },
+          });
+        }
+        return jsonResponse({ code: 'UNAUTHORIZED', message: 'Expired' }, 401);
+      }
+      return jsonResponse({}, 404);
+    });
+
+    render(
+      <AuthProvider fetchImpl={fetchMock}>
+        <AuthStatusProbe />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('loading').textContent).toBe('false');
+    });
+    expect(screen.getByTestId('authed').textContent).toBe('true');
+    expect(screen.getByTestId('email').textContent).toBe('boot@example.com');
+    expect(screen.getByTestId('token').textContent).toBe('boot-fresh-access');
+    expect(refreshGrantSeen).toBe('refresh_token:boot-refresh-1');
+    expect(loadAuthSession()).toMatchObject({
+      accessToken: 'boot-fresh-access',
+      refreshToken: 'boot-rotated-refresh-2',
+    });
+  });
+
+  it('deduplicates concurrent 401 refreshes into a single /token call and syncs rotated token to desktop bridge', async () => {
+    saveAuthSession({
+      accessToken: 'stale-tok-1',
+      refreshToken: 'shared-refresh-1',
+      expiresIn: 3600,
+    });
+
+    const syncRuntimeSession = vi.fn().mockResolvedValue(undefined);
+    const desktopBridge: PlatformBridge = {
+      runtime: PlatformRuntime.DESKTOP,
+      openExternalUrl: vi.fn().mockResolvedValue(undefined),
+      notify: vi.fn().mockResolvedValue(undefined),
+      copyToClipboard: vi.fn().mockResolvedValue(undefined),
+      getServerBaseUrl: vi.fn().mockReturnValue('https://api.example.com'),
+      setServerBaseUrl: vi.fn(),
+      getMcpConfig: vi.fn().mockReturnValue({ mode: McpAccessMode.READ_ONLY, port: 8765 }),
+      setMcpConfig: vi.fn(),
+      syncRuntimeSession,
+    };
+
+    let tokenRefreshCalls = 0;
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/config')) {
+        return jsonResponse({
+          authMode: AuthMode.OIDC,
+          issuerUrl: 'https://auth.example.com/o/digest',
+          clientId: 'client-1',
+          scopes: ['openid', 'profile', 'email', 'offline_access'],
+        });
+      }
+      if (url.endsWith('/.well-known/openid-configuration')) {
+        return jsonResponse({
+          authorization_endpoint: 'https://auth.example.com/authorize',
+          token_endpoint: 'https://auth.example.com/token',
+        });
+      }
+      if (url === 'https://auth.example.com/token') {
+        tokenRefreshCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        return jsonResponse({
+          access_token: 'rotated-tok-2',
+          expires_in: 3600,
+        });
+      }
+      const headers = init?.headers as Headers | undefined;
+      const auth = headers?.get('authorization');
+      if (url.endsWith('/api/v1/me')) {
+        return jsonResponse({
+          user: {
+            id: 'u-1',
+            oidcSub: 'sub-1',
+            email: 'user@example.com',
+            displayName: 'User',
+            role: 'admin',
+            createdAt: '2026-11-26T00:00:00Z',
+            lastLoginAt: null,
+          },
+          onboarding: { hasAiConfig: true, hasSources: true, hasChannels: true, hasSchedule: true },
+        });
+      }
+      if (url.endsWith('/api/v1/settings/sources') || url.endsWith('/api/v1/settings/channels')) {
+        if (auth === 'Bearer stale-tok-1') {
+          return jsonResponse({ code: 'UNAUTHORIZED', message: 'Expired' }, 401);
+        }
+        if (auth === 'Bearer rotated-tok-2') {
+          return jsonResponse([]);
+        }
+      }
+      return jsonResponse({}, 404);
+    });
+
+    render(
+      <AuthProvider bridge={desktopBridge} fetchImpl={fetchMock}>
+        <AuthStatusProbe />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('authed').textContent).toBe('true');
+    });
+
+    screen.getByRole('button', { name: /Trigger Concurrent Calls/i }).click();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('concurrent-state').textContent).toBe('ok:0:0');
+    });
+    expect(tokenRefreshCalls).toBe(1);
+    expect(screen.getByTestId('token').textContent).toBe('rotated-tok-2');
+    // Preserved existing refresh_token when IdP omits rotated refresh_token on refresh
+    expect(loadAuthSession()?.refreshToken).toBe('shared-refresh-1');
+    expect(syncRuntimeSession).toHaveBeenLastCalledWith({
+      serverBaseUrl: 'https://api.example.com',
+      accessToken: 'rotated-tok-2',
+      authMode: AuthMode.OIDC,
+    });
+  });
+
+  it('clears stored session and falls back to Sign-In on permanent invalid_grant refresh failure', async () => {
+    window.localStorage.setItem(STORAGE_KEYS.ACCESS_TOKEN, 'expired-boot-tok');
+    window.localStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, 'revoked-refresh');
+    window.localStorage.setItem(STORAGE_KEYS.TOKEN_EXPIRES_AT, String(Date.now() - 10_000));
+
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/config')) {
+        return jsonResponse({
+          authMode: AuthMode.OIDC,
+          issuerUrl: 'https://auth.example.com/o/digest',
+          clientId: 'client-1',
+          scopes: ['openid', 'profile', 'email', 'offline_access'],
+        });
+      }
+      if (url.endsWith('/.well-known/openid-configuration')) {
+        return jsonResponse({
+          authorization_endpoint: 'https://auth.example.com/authorize',
+          token_endpoint: 'https://auth.example.com/token',
+        });
+      }
+      if (url === 'https://auth.example.com/token') {
+        return jsonResponse(
+          { error: 'invalid_grant', error_description: 'Refresh token revoked' },
+          400,
+        );
+      }
+      return jsonResponse({}, 404);
+    });
+
+    render(
+      <AuthProvider fetchImpl={fetchMock}>
+        <AuthStatusProbe />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('loading').textContent).toBe('false');
+    });
+    expect(screen.getByTestId('authed').textContent).toBe('false');
+    expect(window.localStorage.getItem(STORAGE_KEYS.ACCESS_TOKEN)).toBeNull();
+    expect(window.localStorage.getItem(STORAGE_KEYS.REFRESH_TOKEN)).toBeNull();
+  });
+
+  it('proactively refreshes access_token via scheduled timer before expiry', async () => {
+    vi.useFakeTimers();
+    try {
+      saveAuthSession({
+        accessToken: 'short-lived-tok',
+        refreshToken: 'proactive-refresh-1',
+        expiresIn: 90,
+      });
+
+      const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+        const url = String(input);
+        if (url.endsWith('/api/v1/auth/config')) {
+          return jsonResponse({
+            authMode: AuthMode.OIDC,
+            issuerUrl: 'https://auth.example.com/o/digest',
+            clientId: 'client-1',
+            scopes: ['openid', 'profile', 'email', 'offline_access'],
+          });
+        }
+        if (url.endsWith('/.well-known/openid-configuration')) {
+          return jsonResponse({
+            authorization_endpoint: 'https://auth.example.com/authorize',
+            token_endpoint: 'https://auth.example.com/token',
+          });
+        }
+        if (url === 'https://auth.example.com/token') {
+          return jsonResponse({
+            access_token: 'proactive-new-tok',
+            refresh_token: 'proactive-refresh-2',
+            expires_in: 3600,
+          });
+        }
+        if (url.endsWith('/api/v1/me')) {
+          return jsonResponse({
+            user: {
+              id: 'u-timer',
+              oidcSub: 'sub-timer',
+              email: 'timer@example.com',
+              displayName: 'Timer User',
+              role: 'user',
+              createdAt: '2026-11-26T00:00:00Z',
+              lastLoginAt: null,
+            },
+            onboarding: {
+              hasAiConfig: true,
+              hasSources: true,
+              hasChannels: true,
+              hasSchedule: true,
+            },
+          });
+        }
+        return jsonResponse({}, 404);
+      });
+
+      render(
+        <AuthProvider fetchImpl={fetchMock}>
+          <AuthStatusProbe />
+        </AuthProvider>,
+      );
+
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('authed').textContent).toBe('true');
+      });
+      expect(screen.getByTestId('token').textContent).toBe('short-lived-tok');
+
+      // 90s expiry - 60s lead = 30s delay
+      await vi.advanceTimersByTimeAsync(31_000);
+      await vi.waitFor(() => {
+        expect(screen.getByTestId('token').textContent).toBe('proactive-new-tok');
+      });
+      expect(loadAuthSession()?.refreshToken).toBe('proactive-refresh-2');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -28,16 +28,61 @@ export interface ExchangeCodeParams {
   codeVerifier: string;
 }
 
+export interface RefreshTokenParams {
+  tokenEndpoint: string;
+  clientId: string;
+  refreshToken: string;
+}
+
 export interface TokenExchangeResult {
   accessToken: string;
   idToken?: string;
+  refreshToken?: string;
   expiresIn?: number;
 }
 
 export interface StoredAuthSession {
   accessToken: string;
   idToken: string | null;
+  refreshToken: string | null;
   expiresAt: number | null;
+}
+
+export class OidcTokenError extends Error {
+  readonly status: number;
+  readonly oauthError?: string;
+
+  constructor(message: string, status: number, oauthError?: string) {
+    super(message);
+    this.name = 'OidcTokenError';
+    this.status = status;
+    this.oauthError = oauthError;
+    Object.setPrototypeOf(this, OidcTokenError.prototype);
+  }
+}
+
+export function isPermanentOidcRefreshError(err: unknown): boolean {
+  return err instanceof OidcTokenError && err.status >= 400 && err.status < 500;
+}
+
+export function decodeJwtExpMs(token: string): number | null {
+  const parts = token.trim().split('.');
+  if (parts.length !== 3 || !parts[1]) {
+    return null;
+  }
+  try {
+    const normalized = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padLen = (4 - (normalized.length % 4)) % 4;
+    const padded = `${normalized}${'='.repeat(padLen)}`;
+    const jsonText = atob(padded);
+    const parsed = JSON.parse(jsonText) as Record<string, unknown>;
+    if (typeof parsed.exp === 'number' && Number.isFinite(parsed.exp) && parsed.exp > 0) {
+      return parsed.exp * 1000;
+    }
+  } catch {
+    // Ignore non-JWT or malformed payloads (e.g. opaque or JWE tokens).
+  }
+  return null;
 }
 
 export interface PkceTransaction {
@@ -220,6 +265,60 @@ export function buildAuthorizeUrl(params: BuildAuthorizeUrlParams): string {
   return url.toString();
 }
 
+async function parseOidcTokenResponse(
+  response: Response,
+  fallbackPrefix: string,
+): Promise<TokenExchangeResult> {
+  if (!response.ok) {
+    let detail = `${fallbackPrefix} (${response.status})`;
+    let oauthError: string | undefined;
+    try {
+      const errJson = (await response.json()) as Record<string, unknown>;
+      oauthError =
+        typeof errJson.error === 'string' && errJson.error.trim()
+          ? errJson.error.trim()
+          : undefined;
+      const errDesc =
+        typeof errJson.error_description === 'string' && errJson.error_description.trim()
+          ? errJson.error_description.trim()
+          : (oauthError ?? '');
+      if (errDesc) {
+        detail = errDesc;
+      }
+    } catch {
+      // Keep status message when error body is not JSON.
+    }
+    throw new OidcTokenError(detail, response.status, oauthError);
+  }
+
+  const payload = (await response.json()) as Record<string, unknown>;
+  const accessToken = typeof payload.access_token === 'string' ? payload.access_token.trim() : '';
+  if (!accessToken) {
+    throw new Error('Token response did not include an access_token');
+  }
+  const idToken =
+    typeof payload.id_token === 'string' && payload.id_token.trim()
+      ? payload.id_token.trim()
+      : undefined;
+  const refreshToken =
+    typeof payload.refresh_token === 'string' && payload.refresh_token.trim()
+      ? payload.refresh_token.trim()
+      : undefined;
+  const expiresIn =
+    typeof payload.expires_in === 'number' &&
+    Number.isFinite(payload.expires_in) &&
+    payload.expires_in > 0
+      ? payload.expires_in
+      : undefined;
+
+  return {
+    accessToken,
+    idToken,
+    refreshToken,
+    expiresIn,
+  };
+}
+
 export async function exchangeCodeForToken(
   params: ExchangeCodeParams,
   fetchImpl?: typeof fetch,
@@ -248,41 +347,40 @@ export async function exchangeCodeForToken(
     body: body.toString(),
   });
 
-  if (!response.ok) {
-    let detail = `Token exchange failed (${response.status})`;
-    try {
-      const errJson = (await response.json()) as Record<string, unknown>;
-      const errDesc =
-        typeof errJson.error_description === 'string'
-          ? errJson.error_description
-          : typeof errJson.error === 'string'
-            ? errJson.error
-            : '';
-      if (errDesc) {
-        detail = errDesc;
-      }
-    } catch {
-      // Keep status message when error body is not JSON.
-    }
-    throw new Error(detail);
+  return parseOidcTokenResponse(response, 'Token exchange failed');
+}
+
+export async function refreshOidcToken(
+  params: RefreshTokenParams,
+  fetchImpl?: typeof fetch,
+): Promise<TokenExchangeResult> {
+  if (!isAllowedExternalUrl(params.tokenEndpoint)) {
+    throw new Error('Invalid OIDC token endpoint');
+  }
+  const trimmedRefreshToken = params.refreshToken.trim();
+  if (!trimmedRefreshToken) {
+    throw new Error('Refresh token must not be empty');
+  }
+  const fetcher = fetchImpl ?? globalThis.fetch;
+  if (!fetcher) {
+    throw new Error('Fetch implementation is unavailable');
   }
 
-  const payload = (await response.json()) as Record<string, unknown>;
-  const accessToken = typeof payload.access_token === 'string' ? payload.access_token.trim() : '';
-  if (!accessToken) {
-    throw new Error('Token response did not include an access_token');
-  }
-  const idToken = typeof payload.id_token === 'string' && payload.id_token ? payload.id_token : undefined;
-  const expiresIn =
-    typeof payload.expires_in === 'number' && Number.isFinite(payload.expires_in)
-      ? payload.expires_in
-      : undefined;
+  const body = new URLSearchParams();
+  body.set('grant_type', 'refresh_token');
+  body.set('client_id', params.clientId);
+  body.set('refresh_token', trimmedRefreshToken);
 
-  return {
-    accessToken,
-    idToken,
-    expiresIn,
-  };
+  const response = await fetcher(params.tokenEndpoint, {
+    method: 'POST',
+    headers: {
+      [HTTP_HEADERS.CONTENT_TYPE]: 'application/x-www-form-urlencoded',
+      [HTTP_HEADERS.ACCEPT]: HTTP_HEADERS.CONTENT_TYPE_JSON,
+    },
+    body: body.toString(),
+  });
+
+  return parseOidcTokenResponse(response, 'Token refresh failed');
 }
 
 function getStoragePair(): { primary: Storage | null; fallback: Storage | null } {
@@ -386,12 +484,13 @@ export function clearPkceTransaction(): void {
 export function saveAuthSession(session: {
   accessToken: string;
   idToken?: string | null;
+  refreshToken?: string | null;
   expiresIn?: number | null;
 }): StoredAuthSession {
   const expiresAt =
     typeof session.expiresIn === 'number' && Number.isFinite(session.expiresIn) && session.expiresIn > 0
       ? Date.now() + session.expiresIn * 1000
-      : null;
+      : decodeJwtExpMs(session.accessToken);
 
   setStorageValue(false, STORAGE_KEYS.ACCESS_TOKEN, session.accessToken);
   if (session.idToken) {
@@ -399,6 +498,19 @@ export function saveAuthSession(session: {
   } else {
     removeStorageValue(STORAGE_KEYS.ID_TOKEN);
   }
+
+  let persistedRefreshToken: string | null = null;
+  if (session.refreshToken === undefined) {
+    const existing = getStorageValue(false, STORAGE_KEYS.REFRESH_TOKEN);
+    persistedRefreshToken = existing?.trim() || null;
+  } else if (session.refreshToken && session.refreshToken.trim()) {
+    persistedRefreshToken = session.refreshToken.trim();
+    setStorageValue(false, STORAGE_KEYS.REFRESH_TOKEN, persistedRefreshToken);
+  } else {
+    removeStorageValue(STORAGE_KEYS.REFRESH_TOKEN);
+    persistedRefreshToken = null;
+  }
+
   if (expiresAt !== null) {
     setStorageValue(false, STORAGE_KEYS.TOKEN_EXPIRES_AT, String(expiresAt));
   } else {
@@ -408,6 +520,7 @@ export function saveAuthSession(session: {
   return {
     accessToken: session.accessToken,
     idToken: session.idToken ?? null,
+    refreshToken: persistedRefreshToken,
     expiresAt,
   };
 }
@@ -417,16 +530,21 @@ export function loadAuthSession(): StoredAuthSession | null {
   if (!accessToken || !accessToken.trim()) {
     return null;
   }
+  const trimmedAccess = accessToken.trim();
   const idToken = getStorageValue(false, STORAGE_KEYS.ID_TOKEN);
+  const refreshToken = getStorageValue(false, STORAGE_KEYS.REFRESH_TOKEN)?.trim() || null;
   const rawExpiresAt = getStorageValue(false, STORAGE_KEYS.TOKEN_EXPIRES_AT);
   let expiresAt: number | null = null;
   if (rawExpiresAt !== null && rawExpiresAt.trim() !== '') {
     const parsed = Number(rawExpiresAt);
     expiresAt = Number.isFinite(parsed) ? parsed : 0;
+  } else {
+    expiresAt = decodeJwtExpMs(trimmedAccess);
   }
   return {
-    accessToken: accessToken.trim(),
+    accessToken: trimmedAccess,
     idToken,
+    refreshToken,
     expiresAt,
   };
 }
@@ -434,6 +552,7 @@ export function loadAuthSession(): StoredAuthSession | null {
 export function clearAuthSession(): void {
   removeStorageValue(STORAGE_KEYS.ACCESS_TOKEN);
   removeStorageValue(STORAGE_KEYS.ID_TOKEN);
+  removeStorageValue(STORAGE_KEYS.REFRESH_TOKEN);
   removeStorageValue(STORAGE_KEYS.TOKEN_EXPIRES_AT);
 }
 

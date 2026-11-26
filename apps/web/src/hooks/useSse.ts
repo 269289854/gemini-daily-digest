@@ -21,6 +21,7 @@ export interface UseSseOptions {
   enabled: boolean;
   baseUrl: string;
   accessToken: string | null;
+  refreshAccessToken?: () => Promise<string | null>;
   onRunProgress?: (event: RunProgressEvent) => void;
   onDigestReady?: (event: DigestReadyEvent) => void;
   onAlertTriggered?: (event: AlertTriggeredEvent) => void;
@@ -137,6 +138,7 @@ export function useSse(options: UseSseOptions): UseSseResult {
     enabled,
     baseUrl,
     accessToken,
+    refreshAccessToken,
     onRunProgress,
     onDigestReady,
     onAlertTriggered,
@@ -151,6 +153,8 @@ export function useSse(options: UseSseOptions): UseSseResult {
   const [reconnectCount, setReconnectCount] = useState<number>(0);
   const [error, setError] = useState<string | null>(null);
 
+  const refreshAccessTokenRef = useRef(refreshAccessToken);
+  refreshAccessTokenRef.current = refreshAccessToken;
   const onRunProgressRef = useRef(onRunProgress);
   onRunProgressRef.current = onRunProgress;
   const onDigestReadyRef = useRef(onDigestReady);
@@ -265,7 +269,29 @@ export function useSse(options: UseSseOptions): UseSseResult {
           return;
         }
 
-        if (response.status === 401 || response.status === 403) {
+        if (response.status === 401) {
+          if (refreshAccessTokenRef.current) {
+            setStatus('reconnecting');
+            setError('Refreshing session...');
+            let nextToken: string | null = null;
+            try {
+              nextToken = await refreshAccessTokenRef.current();
+            } catch {
+              nextToken = null;
+            }
+            if (disposed) {
+              return;
+            }
+            if (nextToken && nextToken.trim() && nextToken.trim() !== token) {
+              return;
+            }
+          }
+          setStatus('error');
+          setError(`SSE authentication error (${response.status})`);
+          return;
+        }
+
+        if (response.status === 403) {
           setStatus('error');
           setError(`SSE authentication error (${response.status})`);
           return;
