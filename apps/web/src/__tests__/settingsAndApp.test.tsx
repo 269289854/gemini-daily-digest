@@ -122,6 +122,73 @@ describe('SettingsPage, all 5 Settings Panels, and App Integration', () => {
     expect(screen.getByText('145 ms')).toBeInTheDocument();
   });
 
+  it('AiConfigPanel auto-fetches model dropdown list, allows picking from dropdown, and supports manual custom input', async () => {
+    const view: UserAiConfigView = {
+      providerLabel: 'DeepSeek',
+      baseUrl: 'https://api.deepseek.com',
+      apiKeyHint: '****5678',
+      hasApiKey: true,
+      model: 'deepseek-chat',
+      systemPrompt: 'Summarize clearly.',
+      temperature: 0.2,
+      maxTokens: 4096,
+      updatedAt: '2026-11-26T00:00:00Z',
+    };
+
+    const api = {
+      getAiConfig: vi.fn().mockResolvedValue(view),
+      updateAiConfig: vi.fn().mockImplementation(async (cmd) => ({
+        ...view,
+        model: cmd.model,
+      })),
+      testAiConfig: vi.fn(),
+      listAiModels: vi.fn().mockResolvedValue({
+        models: [
+          { id: 'deepseek-chat', ownedBy: 'deepseek' },
+          { id: 'deepseek-reasoner', ownedBy: 'deepseek' },
+        ],
+        endpointUrl: 'https://api.deepseek.com/v1/models',
+        latencyMs: 64,
+      }),
+    } as unknown as ApiClient;
+
+    render(<AiConfigPanel api={api} />);
+
+    // Auto-fetches available models on initial load when an API key is already stored.
+    expect(
+      await screen.findByText(/Loaded 2 models \(64 ms\)/i),
+    ).toBeInTheDocument();
+    expect(api.listAiModels).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseUrl: 'https://api.deepseek.com',
+        clearApiKey: false,
+      }),
+    );
+
+    // Clicking Refresh Models opens the dropdown listbox and allows selecting a fetched model.
+    fireEvent.click(screen.getByRole('button', { name: /Refresh Models/i }));
+    const reasonerOption = await screen.findByRole('option', { name: /deepseek-reasoner/i });
+    fireEvent.click(reasonerOption);
+
+    const modelInput = screen.getByRole('combobox') as HTMLInputElement;
+    expect(modelInput.value).toBe('deepseek-reasoner');
+
+    // Manual custom model typing still works and shows manual hint before saving.
+    fireEvent.change(modelInput, { target: { value: 'custom-gemini-pro-preview' } });
+    expect(
+      screen.getByText(/Manual input: "custom-gemini-pro-preview"/i),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Save AI Config/i }));
+    await waitFor(() => {
+      expect(api.updateAiConfig).toHaveBeenCalledWith(
+        expect.objectContaining({
+          model: 'custom-gemini-pro-preview',
+        }),
+      );
+    });
+  });
+
   it('SourcesPanel handles preset import, locks X sources to user_private, and supports export/import/test', async () => {
     const publicSrc: UserSourceView = {
       id: 'src-1',

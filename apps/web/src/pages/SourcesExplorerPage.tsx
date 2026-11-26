@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bookmark,
@@ -14,6 +14,7 @@ import {
 import { ApiError, type ApiClient } from '../api/client';
 import { SafeMarkdown, sanitizeHttpUrl } from '../components/SafeMarkdown';
 import { DEFAULTS } from '../constants/routes';
+import { type TranslateFn, useI18n } from '../i18n';
 import type { PlatformBridge } from '../platform/bridge';
 import type {
   ItemView,
@@ -35,7 +36,7 @@ interface UiErrorState {
   requestId?: string;
 }
 
-function toUiError(err: unknown): UiErrorState {
+function toUiError(err: unknown, t: TranslateFn): UiErrorState {
   if (err instanceof ApiError) {
     return {
       code: err.code,
@@ -46,7 +47,7 @@ function toUiError(err: unknown): UiErrorState {
   if (err instanceof Error) {
     return { message: err.message };
   }
-  return { message: 'Unexpected error occurred' };
+  return { message: t('common.unexpectedError') };
 }
 
 function healthDotClass(status: FetchOutcome | null): string {
@@ -64,10 +65,6 @@ function healthDotClass(status: FetchOutcome | null): string {
   }
 }
 
-function healthStatusLabel(status: FetchOutcome | null): string {
-  return status ?? 'never_fetched';
-}
-
 function priorityBadgeClass(priority: AlertPriority): string {
   switch (priority) {
     case AlertPriority.URGENT:
@@ -79,22 +76,22 @@ function priorityBadgeClass(priority: AlertPriority): string {
   }
 }
 
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) {
-    return 'Never';
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString();
-}
-
 export function SourcesExplorerPage({
   api,
   bridge,
   initialSourceId,
 }: SourcesExplorerPageProps) {
+  const {
+    t,
+    formatDateTime,
+    labelSourceType,
+    labelSourceScope,
+    labelFetchOutcome,
+    labelAlertPriority,
+  } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const [sources, setSources] = useState<UserSourceView[]>([]);
   const [loadingSources, setLoadingSources] = useState(true);
   const [selectedSourceId, setSelectedSourceId] = useState<string>(initialSourceId ?? '');
@@ -140,7 +137,7 @@ export function SourcesExplorerPage({
         return list.length > 0 ? list[0].id : '';
       });
     } catch (err) {
-      setError(toUiError(err));
+      setError(toUiError(err, tRef.current));
     } finally {
       setLoadingSources(false);
     }
@@ -161,7 +158,7 @@ export function SourcesExplorerPage({
         const res = await api.getSourceDigests(sourceId, { page, pageSize: DEFAULTS.PAGE_SIZE });
         setSourceDigests(res);
       } catch (err) {
-        setError(toUiError(err));
+        setError(toUiError(err, tRef.current));
       } finally {
         setLoadingDigests(false);
       }
@@ -180,7 +177,7 @@ export function SourcesExplorerPage({
         const res = await api.getSourceItems(sourceId, { page, pageSize: DEFAULTS.PAGE_SIZE });
         setSourceItems(res);
       } catch (err) {
-        setError(toUiError(err));
+        setError(toUiError(err, tRef.current));
       } finally {
         setLoadingItems(false);
       }
@@ -282,7 +279,7 @@ export function SourcesExplorerPage({
         );
       }
     } catch (err) {
-      setError(toUiError(err));
+      setError(toUiError(err, t));
     } finally {
       setBookmarkBusyId(null);
     }
@@ -292,10 +289,8 @@ export function SourcesExplorerPage({
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-white">Sources Explorer</h1>
-          <p className="text-xs text-slate-400">
-            Inspect per-account health, daily independent summary timelines, and raw collected items.
-          </p>
+          <h1 className="text-xl font-bold tracking-tight text-white">{t('sources.title')}</h1>
+          <p className="text-xs text-slate-400">{t('sources.subtitle')}</p>
         </div>
         <button
           type="button"
@@ -309,7 +304,7 @@ export function SourcesExplorerPage({
           className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-800"
         >
           <RefreshCw className="h-3.5 w-3.5" />
-          Refresh
+          {t('common.refresh')}
         </button>
       </div>
 
@@ -327,7 +322,7 @@ export function SourcesExplorerPage({
               </div>
               {error.requestId && (
                 <div className="font-mono text-xs text-rose-300/80">
-                  Request ID: {error.requestId}
+                  {t('common.requestId', { id: error.requestId })}
                 </div>
               )}
             </div>
@@ -337,7 +332,7 @@ export function SourcesExplorerPage({
             onClick={() => setError(null)}
             className="text-xs text-rose-300 hover:text-white"
           >
-            Dismiss
+            {t('common.dismiss')}
           </button>
         </div>
       )}
@@ -350,8 +345,8 @@ export function SourcesExplorerPage({
               <Search className="pointer-events-none absolute left-2.5 top-2.5 h-3.5 w-3.5 text-slate-500" />
               <input
                 type="text"
-                aria-label="Filter sources"
-                placeholder="Filter sources by name or handle..."
+                aria-label={t('sources.filterInputAria')}
+                placeholder={t('sources.filterPlaceholder')}
                 value={filterText}
                 onChange={(event) => setFilterText(event.target.value)}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950/80 py-1.5 pl-8 pr-3 text-xs text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
@@ -360,12 +355,12 @@ export function SourcesExplorerPage({
 
             <div className="grid grid-cols-2 gap-2">
               <select
-                aria-label="Filter by category"
+                aria-label={t('sources.filterCategoryAria')}
                 value={categoryFilter}
                 onChange={(event) => setCategoryFilter(event.target.value)}
                 className="rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
               >
-                <option value="all">All categories</option>
+                <option value="all">{t('sources.allCategories')}</option>
                 {categories.map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
@@ -374,14 +369,18 @@ export function SourcesExplorerPage({
               </select>
 
               <select
-                aria-label="Filter by scope"
+                aria-label={t('sources.filterScopeAria')}
                 value={scopeFilter}
                 onChange={(event) => setScopeFilter(event.target.value as 'all' | SourceScope)}
                 className="rounded-lg border border-slate-700 bg-slate-950/80 px-2.5 py-1.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
               >
-                <option value="all">All scopes</option>
-                <option value={SourceScope.SHARED_PUBLIC}>{SourceScope.SHARED_PUBLIC}</option>
-                <option value={SourceScope.USER_PRIVATE}>{SourceScope.USER_PRIVATE}</option>
+                <option value="all">{t('sources.allScopes')}</option>
+                <option value={SourceScope.SHARED_PUBLIC}>
+                  {labelSourceScope(SourceScope.SHARED_PUBLIC)}
+                </option>
+                <option value={SourceScope.USER_PRIVATE}>
+                  {labelSourceScope(SourceScope.USER_PRIVATE)}
+                </option>
               </select>
             </div>
           </div>
@@ -389,16 +388,17 @@ export function SourcesExplorerPage({
           {loadingSources ? (
             <div className="flex items-center justify-center gap-2 py-8 text-xs text-slate-400">
               <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
-              Loading sources...
+              {t('sources.loadingSources')}
             </div>
           ) : filteredSources.length === 0 ? (
             <div className="rounded-lg border border-dashed border-slate-800 p-6 text-center text-xs text-slate-400">
-              No matching sources found.
+              {t('sources.noMatchingSources')}
             </div>
           ) : (
             <ul className="max-h-[70vh] space-y-2 overflow-y-auto pr-1">
               {filteredSources.map((source) => {
                 const selected = source.id === selectedSourceId;
+                const statusLabel = labelFetchOutcome(source.lastStatus, 'never_fetched');
                 return (
                   <li key={source.id}>
                     <button
@@ -417,8 +417,8 @@ export function SourcesExplorerPage({
                             className={`h-2.5 w-2.5 shrink-0 rounded-full ${healthDotClass(
                               source.lastStatus,
                             )}`}
-                            title={`Status: ${healthStatusLabel(source.lastStatus)}`}
-                            aria-label={`Health status: ${healthStatusLabel(source.lastStatus)}`}
+                            title={t('sources.statusTooltip', { status: statusLabel })}
+                            aria-label={t('sources.healthStatusAria', { status: statusLabel })}
                           />
                           <span className="truncate text-sm font-medium text-white">
                             {source.customName || source.defaultName}
@@ -426,7 +426,7 @@ export function SourcesExplorerPage({
                         </div>
                         {source.consecutiveFailures > 0 && (
                           <span className="shrink-0 rounded-full bg-rose-500/20 px-2 py-0.5 text-[10px] font-semibold text-rose-300">
-                            {source.consecutiveFailures} failures
+                            {t('sources.failuresCount', { count: source.consecutiveFailures })}
                           </span>
                         )}
                       </div>
@@ -435,16 +435,22 @@ export function SourcesExplorerPage({
                         <span className="rounded bg-slate-800 px-1.5 py-0.5 text-slate-300">
                           {source.category}
                         </span>
-                        <span className="font-mono text-slate-400">{source.sourceType}</span>
+                        <span className="font-mono text-slate-400">
+                          {labelSourceType(source.sourceType)}
+                        </span>
                         {!source.enabled && (
                           <span className="rounded bg-slate-800 px-1.5 py-0.5 text-amber-300">
-                            Paused
+                            {t('common.paused')}
                           </span>
                         )}
                       </div>
 
                       <div className="mt-1.5 text-[11px] text-slate-500">
-                        Last fetch: {formatDateTime(source.lastFetchedAt)}
+                        {t('sources.lastFetch', {
+                          time: source.lastFetchedAt
+                            ? formatDateTime(source.lastFetchedAt)
+                            : t('common.never'),
+                        })}
                       </div>
 
                       {source.lastError && (
@@ -468,8 +474,7 @@ export function SourcesExplorerPage({
           {!selectedSource ? (
             <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-slate-800 bg-slate-900/40 py-16 text-center text-xs text-slate-400">
               <Radio className="mb-2 h-7 w-7 text-slate-600" />
-              Select a source from the left panel to view its daily digest timeline and collected
-              items.
+              {t('sources.selectPrompt')}
             </div>
           ) : (
             <>
@@ -494,20 +499,20 @@ export function SourcesExplorerPage({
 
                   <div className="flex flex-wrap gap-2 text-xs">
                     <span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-0.5 text-slate-300">
-                      {selectedSource.sourceType}
+                      {labelSourceType(selectedSource.sourceType)}
                     </span>
                     <span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-0.5 text-slate-300">
-                      {selectedSource.scope}
+                      {labelSourceScope(selectedSource.scope)}
                     </span>
                     <span className="rounded-full border border-slate-700 bg-slate-800 px-2.5 py-0.5 text-slate-300">
-                      {healthStatusLabel(selectedSource.lastStatus)}
+                      {labelFetchOutcome(selectedSource.lastStatus, 'never_fetched')}
                     </span>
                   </div>
                 </div>
 
                 {selectedSource.lastError && (
                   <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-950/30 px-3 py-2 text-xs text-rose-300">
-                    Last Error: {selectedSource.lastError}
+                    {t('sources.lastError', { error: selectedSource.lastError })}
                   </div>
                 )}
               </div>
@@ -516,11 +521,11 @@ export function SourcesExplorerPage({
               <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
                 <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-3">
                   <h3 className="text-sm font-semibold text-white">
-                    Daily Independent Summary Timeline
+                    {t('sources.dailyTimelineTitle')}
                   </h3>
                   {sourceDigests && (
                     <span className="text-xs text-slate-400">
-                      {sourceDigests.total} digests
+                      {t('sources.digestsCount', { count: sourceDigests.total })}
                     </span>
                   )}
                 </div>
@@ -528,11 +533,11 @@ export function SourcesExplorerPage({
                 {loadingDigests ? (
                   <div className="flex items-center justify-center gap-2 py-8 text-xs text-slate-400">
                     <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
-                    Loading source summaries...
+                    {t('sources.loadingSummaries')}
                   </div>
                 ) : !sourceDigests || sourceDigests.items.length === 0 ? (
                   <p className="py-6 text-center text-xs text-slate-400">
-                    No daily summaries recorded for this source yet.
+                    {t('sources.noSummaries')}
                   </p>
                 ) : (
                   <div className="mt-4 space-y-4">
@@ -546,7 +551,7 @@ export function SourcesExplorerPage({
                             {entry.digestDate}
                           </span>
                           <span className="text-xs text-slate-400">
-                            {entry.itemCount} items summarized
+                            {t('sources.itemsSummarized', { count: entry.itemCount })}
                           </span>
                         </div>
 
@@ -572,7 +577,10 @@ export function SourcesExplorerPage({
                     {sourceDigests.totalPages > 1 && (
                       <div className="flex items-center justify-between pt-2 text-xs text-slate-400">
                         <span>
-                          Page {sourceDigests.page} of {sourceDigests.totalPages}
+                          {t('common.pageOf', {
+                            page: sourceDigests.page,
+                            totalPages: sourceDigests.totalPages,
+                          })}
                         </span>
                         <div className="flex items-center gap-2">
                           <button
@@ -582,7 +590,7 @@ export function SourcesExplorerPage({
                             className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-slate-200 hover:bg-slate-800 disabled:opacity-40"
                           >
                             <ChevronLeft className="h-3.5 w-3.5" />
-                            Prev
+                            {t('common.prev')}
                           </button>
                           <button
                             type="button"
@@ -590,7 +598,7 @@ export function SourcesExplorerPage({
                             onClick={() => setDigestsPage((p) => p + 1)}
                             className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-slate-200 hover:bg-slate-800 disabled:opacity-40"
                           >
-                            Next
+                            {t('common.next')}
                             <ChevronRight className="h-3.5 w-3.5" />
                           </button>
                         </div>
@@ -603,21 +611,23 @@ export function SourcesExplorerPage({
               {/* Paginated Raw Collected Items Stream */}
               <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
                 <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-3">
-                  <h3 className="text-sm font-semibold text-white">Collected Items Stream</h3>
+                  <h3 className="text-sm font-semibold text-white">
+                    {t('sources.itemsStreamTitle')}
+                  </h3>
                   {sourceItems && (
-                    <span className="text-xs text-slate-400">{sourceItems.total} items</span>
+                    <span className="text-xs text-slate-400">
+                      {t('common.itemsCount', { count: sourceItems.total })}
+                    </span>
                   )}
                 </div>
 
                 {loadingItems ? (
                   <div className="flex items-center justify-center gap-2 py-8 text-xs text-slate-400">
                     <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
-                    Loading collected items...
+                    {t('sources.loadingItems')}
                   </div>
                 ) : !sourceItems || sourceItems.items.length === 0 ? (
-                  <p className="py-6 text-center text-xs text-slate-400">
-                    No items collected from this source yet.
-                  </p>
+                  <p className="py-6 text-center text-xs text-slate-400">{t('sources.noItems')}</p>
                 ) : (
                   <div className="mt-4 space-y-3">
                     {sourceItems.items.map((item) => {
@@ -636,18 +646,19 @@ export function SourcesExplorerPage({
                                     item.priority,
                                   )}`}
                                 >
-                                  {item.priority}
+                                  {labelAlertPriority(item.priority)}
                                 </span>
                                 <span className="text-[11px] text-slate-400">
-                                  Score: {item.importanceScore}
+                                  {t('common.score')}: {item.importanceScore}
                                 </span>
                                 {item.author && (
                                   <span className="text-[11px] text-slate-400">
-                                    by {item.author}
+                                    {t('common.byAuthor', { author: item.author })}
                                   </span>
                                 )}
                                 <span className="text-[11px] text-slate-500">
-                                  {formatDateTime(item.publishedAt ?? item.fetchedAt)}
+                                  {formatDateTime(item.publishedAt ?? item.fetchedAt) ||
+                                    t('common.never')}
                                 </span>
                               </div>
 
@@ -673,7 +684,7 @@ export function SourcesExplorerPage({
 
                               {item.bodyPruned ? (
                                 <span className="inline-block rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-400">
-                                  Body pruned (&gt;180 days)
+                                  {t('common.bodyPruned')}
                                 </span>
                               ) : (
                                 item.summary && (
@@ -701,7 +712,11 @@ export function SourcesExplorerPage({
                               type="button"
                               onClick={() => void handleToggleBookmark(item)}
                               disabled={busy}
-                              aria-label={item.bookmarked ? 'Remove bookmark' : 'Bookmark item'}
+                              aria-label={
+                                item.bookmarked
+                                  ? t('common.bookmarkAriaRemove')
+                                  : t('common.bookmarkAriaAdd')
+                              }
                               className={`inline-flex shrink-0 items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
                                 item.bookmarked
                                   ? 'border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
@@ -715,7 +730,7 @@ export function SourcesExplorerPage({
                               ) : (
                                 <Bookmark className="h-3.5 w-3.5" />
                               )}
-                              {item.bookmarked ? 'Bookmarked' : 'Bookmark'}
+                              {item.bookmarked ? t('common.bookmarked') : t('common.bookmark')}
                             </button>
                           </div>
                         </article>
@@ -725,7 +740,10 @@ export function SourcesExplorerPage({
                     {sourceItems.totalPages > 1 && (
                       <div className="flex items-center justify-between pt-2 text-xs text-slate-400">
                         <span>
-                          Page {sourceItems.page} of {sourceItems.totalPages}
+                          {t('common.pageOf', {
+                            page: sourceItems.page,
+                            totalPages: sourceItems.totalPages,
+                          })}
                         </span>
                         <div className="flex items-center gap-2">
                           <button
@@ -735,7 +753,7 @@ export function SourcesExplorerPage({
                             className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-slate-200 hover:bg-slate-800 disabled:opacity-40"
                           >
                             <ChevronLeft className="h-3.5 w-3.5" />
-                            Prev
+                            {t('common.prev')}
                           </button>
                           <button
                             type="button"
@@ -743,7 +761,7 @@ export function SourcesExplorerPage({
                             onClick={() => setItemsPage((p) => p + 1)}
                             className="inline-flex items-center gap-1 rounded border border-slate-700 bg-slate-900 px-2.5 py-1 text-slate-200 hover:bg-slate-800 disabled:opacity-40"
                           >
-                            Next
+                            {t('common.next')}
                             <ChevronRight className="h-3.5 w-3.5" />
                           </button>
                         </div>

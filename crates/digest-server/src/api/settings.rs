@@ -37,7 +37,10 @@ use crate::repo::{
     UpdateScheduleCmd, UpdateSourceCmd, UpsertAiConfigRecord, UpsertWatchlistRuleCmd,
     UserAiConfigView, UserScheduleRecord, UserSourceView, WatchlistRuleRecord,
 };
-use crate::services::{AiTestRequest, AiTestResult, ChannelTestResult, SourceTestResult};
+use crate::services::{
+    AiModelsRequest, AiModelsResult, AiTestRequest, AiTestResult, ChannelTestResult,
+    SourceTestResult,
+};
 use crate::state::AppState;
 
 const fn default_true() -> bool {
@@ -245,6 +248,35 @@ pub async fn test_ai_config(
     let result = state
         .executor
         .test_ai_config(user.id, body)
+        .await
+        .map_err(|err| ApiError::new(req_id.0, err))?;
+
+    Ok(Json(result))
+}
+
+/// `POST /api/v1/settings/ai/models` — SSRF-checks `baseUrl` (when supplied) and discovers available models.
+pub async fn list_ai_models(
+    State(state): State<AppState>,
+    req_id: RequestId,
+    AuthenticatedUser(user): AuthenticatedUser,
+    OptionalApiJson(body): OptionalApiJson<AiModelsRequest>,
+) -> Result<Json<AiModelsResult>, ApiError> {
+    if let Some(raw_url) = body
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+    {
+        let _ = state
+            .ssrf
+            .validate_url(raw_url)
+            .await
+            .map_err(|err| ApiError::new(&req_id.0, err))?;
+    }
+
+    let result = state
+        .executor
+        .list_ai_models(user.id, body)
         .await
         .map_err(|err| ApiError::new(req_id.0, err))?;
 

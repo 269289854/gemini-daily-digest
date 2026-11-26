@@ -3,9 +3,11 @@ import { AlertCircle, Globe, Loader2, LogIn, Monitor, Sparkles } from 'lucide-re
 import { normalizeBaseUrl } from './api/client';
 import { AuthCallbackPage } from './auth/AuthCallbackPage';
 import { AuthProvider, useAuth } from './auth/AuthProvider';
+import { LanguageSwitcher } from './components/LanguageSwitcher';
 import { Layout } from './components/Layout';
-import { APP_INFO, APP_ROUTES, DEFAULTS } from './constants/routes';
+import { APP_ROUTES, DEFAULTS } from './constants/routes';
 import { useSse } from './hooks/useSse';
+import { I18nProvider, useI18n } from './i18n';
 import { DailyDigestPage } from './pages/DailyDigestPage';
 import { HistorySearchPage } from './pages/HistorySearchPage';
 import { RunsStatsPage } from './pages/RunsStatsPage';
@@ -119,6 +121,7 @@ function AuthenticatedShell({
   onNavigate,
 }: AuthenticatedShellProps) {
   const { api, accessToken, serverBaseUrl, updateServerBaseUrl } = useAuth();
+  const { t } = useI18n();
   const [latestDigestReady, setLatestDigestReady] = useState<DigestReadyEvent | null>(null);
 
   const sse = useSse({
@@ -129,16 +132,18 @@ function AuthenticatedShell({
     onDigestReady: (event) => {
       setLatestDigestReady(event);
       if (bridge.runtime === PlatformRuntime.DESKTOP) {
-        const body = event.title
-          ? `${event.title} (${event.itemCount} items)`
-          : `${event.digestDate} (${event.itemCount} items)`;
-        void bridge.notify('Daily Digest Ready', body);
+        const label = event.title || event.digestDate;
+        const body = t('layout.desktopNotifyDigestBody', { label, count: event.itemCount });
+        void bridge.notify(t('layout.desktopNotifyDigestTitle'), body);
       }
     },
     onAlertTriggered: (event) => {
       if (event.count > 0) {
-        const firstTitle = event.items[0]?.title ?? 'Urgent watchlist match';
-        void bridge.notify(`Urgent Watchlist Alert (${event.count})`, firstTitle);
+        const firstTitle = event.items[0]?.title ?? t('layout.desktopNotifyAlertFallback');
+        void bridge.notify(
+          t('layout.desktopNotifyAlertTitle', { count: event.count }),
+          firstTitle,
+        );
       }
     },
   });
@@ -209,6 +214,7 @@ interface SignInScreenProps {
 
 function SignInScreen({ bridge }: SignInScreenProps) {
   const { authConfig, error, login, serverBaseUrl, updateServerBaseUrl } = useAuth();
+  const { t } = useI18n();
   const [signingIn, setSigningIn] = useState(false);
   const [showServerConfig, setShowServerConfig] = useState(
     () => bridge.runtime === PlatformRuntime.DESKTOP || Boolean(serverBaseUrl),
@@ -242,11 +248,11 @@ function SignInScreen({ bridge }: SignInScreenProps) {
       setDraftBaseUrl(normalized);
       setUrlSavedMessage(
         normalized
-          ? `Server URL set to ${normalized}`
-          : 'Server URL reset to same-origin relative mode.',
+          ? t('auth.serverUrlSet', { url: normalized })
+          : t('auth.serverUrlReset'),
       );
     } catch (err) {
-      setUrlError(err instanceof Error ? err.message : 'Invalid server URL');
+      setUrlError(err instanceof Error ? err.message : t('auth.invalidServerUrl'));
     }
   };
 
@@ -256,25 +262,27 @@ function SignInScreen({ bridge }: SignInScreenProps) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-12 text-slate-100">
       <div className="w-full max-w-md space-y-6 rounded-2xl border border-slate-800 bg-slate-900/80 p-8 shadow-2xl">
-        <div className="flex items-start gap-3">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500/25 to-sky-500/20 text-emerald-300 ring-1 ring-emerald-500/30">
-            <Sparkles className="h-5 w-5" />
-          </div>
-          <div className="space-y-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-bold tracking-tight text-white">{APP_INFO.NAME}</h1>
-              {bridge.runtime === PlatformRuntime.DESKTOP && (
-                <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300">
-                  <Monitor className="h-3 w-3" />
-                  Desktop
-                </span>
-              )}
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500/25 to-sky-500/20 text-emerald-300 ring-1 ring-emerald-500/30">
+              <Sparkles className="h-5 w-5" />
             </div>
-            <p className="text-xs text-slate-400">
-              Sign in to access your daily AI ecosystem digest, per-source timelines, and alert
-              controls.
-            </p>
+            <div className="space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <h1 className="text-xl font-bold tracking-tight text-white">
+                  {t('common.appName')}
+                </h1>
+                {bridge.runtime === PlatformRuntime.DESKTOP && (
+                  <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300">
+                    <Monitor className="h-3 w-3" />
+                    {t('common.desktopBadge')}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-slate-400">{t('auth.signInSubtitle')}</p>
+            </div>
           </div>
+          <LanguageSwitcher className="shrink-0" />
         </div>
 
         {combinedError && (
@@ -303,7 +311,11 @@ function SignInScreen({ bridge }: SignInScreenProps) {
           className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
         >
           {signingIn ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogIn className="h-4 w-4" />}
-          {signingIn ? 'Signing in...' : isDevBypass ? 'Continue with Dev Bypass' : 'Sign in with OIDC'}
+          {signingIn
+            ? t('auth.signingIn')
+            : isDevBypass
+              ? t('auth.continueWithDevBypass')
+              : t('auth.signInWithOidc')}
         </button>
 
         <div className="border-t border-slate-800 pt-4">
@@ -314,31 +326,31 @@ function SignInScreen({ bridge }: SignInScreenProps) {
             className="inline-flex items-center gap-1.5 text-xs font-medium text-slate-400 transition hover:text-slate-200"
           >
             <Globe className="h-3.5 w-3.5" />
-            {showServerConfig ? 'Hide Server Base URL' : 'Configure Server Base URL'}
+            {showServerConfig ? t('auth.hideServerUrl') : t('auth.configureServerUrl')}
           </button>
 
           {showServerConfig && (
             <form onSubmit={handleApplyServerUrl} className="mt-3 space-y-2.5">
               <label className="block space-y-1 text-xs">
-                <span className="font-medium text-slate-300">Server Base URL</span>
+                <span className="font-medium text-slate-300">{t('auth.serverBaseUrl')}</span>
                 <input
                   type="text"
-                  aria-label="Server Base URL"
+                  aria-label={t('auth.serverBaseUrl')}
                   value={draftBaseUrl}
                   onChange={(e) => setDraftBaseUrl(e.target.value)}
-                  placeholder={`Relative same-origin or ${DEFAULTS.DEFAULT_LOCAL_SERVER_URL}`}
+                  placeholder={t('auth.serverBaseUrlPlaceholder', {
+                    localUrl: DEFAULTS.DEFAULT_LOCAL_SERVER_URL,
+                  })}
                   className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
                 />
               </label>
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[11px] text-slate-500">
-                  Leave blank for relative web API paths.
-                </span>
+                <span className="text-[11px] text-slate-500">{t('auth.serverBaseUrlHint')}</span>
                 <button
                   type="submit"
                   className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-slate-700"
                 >
-                  Apply URL
+                  {t('auth.applyUrl')}
                 </button>
               </div>
             </form>
@@ -356,6 +368,7 @@ interface AppRouterProps {
 
 function AppRouter({ bridge, fetchImpl }: AppRouterProps) {
   const { authConfig, isLoading, isAuthenticated } = useAuth();
+  const { t } = useI18n();
   const [routeState, setRouteState] = useState<RouteState>(() => readBrowserRouteState());
 
   const navigate = useCallback((targetRoute: string, params?: Record<string, string>) => {
@@ -416,7 +429,7 @@ function AppRouter({ bridge, fetchImpl }: AppRouterProps) {
       <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-200">
         <div className="flex items-center gap-3 rounded-xl border border-slate-800 bg-slate-900/80 px-5 py-4 text-sm">
           <Loader2 className="h-5 w-5 animate-spin text-emerald-400" />
-          <span>Loading {APP_INFO.NAME}...</span>
+          <span>{t('auth.loadingApp', { name: t('common.appName') })}</span>
         </div>
       </div>
     );
@@ -440,9 +453,11 @@ export function App({ bridge, fetchImpl }: AppProps = {}) {
   const activeBridge = useMemo(() => bridge ?? createPlatformBridge(), [bridge]);
 
   return (
-    <AuthProvider bridge={activeBridge} fetchImpl={fetchImpl}>
-      <AppRouter bridge={activeBridge} fetchImpl={fetchImpl} />
-    </AuthProvider>
+    <I18nProvider>
+      <AuthProvider bridge={activeBridge} fetchImpl={fetchImpl}>
+        <AppRouter bridge={activeBridge} fetchImpl={fetchImpl} />
+      </AuthProvider>
+    </I18nProvider>
   );
 }
 

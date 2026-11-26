@@ -1,5 +1,6 @@
 import { AlertCircle, ArrowLeft, Loader2, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { useI18n } from '../i18n';
 import { useAuth } from './AuthProvider';
 
 export interface AuthCallbackPageProps {
@@ -10,6 +11,7 @@ export interface AuthCallbackPageProps {
 
 export function AuthCallbackPage({ onSuccess, onBackToLogin, search }: AuthCallbackPageProps) {
   const { handleCallback } = useAuth();
+  const { t } = useI18n();
   const [callbackError, setCallbackError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(true);
   const startedSearchRef = useRef<string | null>(null);
@@ -48,10 +50,10 @@ export function AuthCallbackPage({ onSuccess, onBackToLogin, search }: AuthCallb
         if (!mountedRef.current) {
           return;
         }
-        setCallbackError(err instanceof Error ? err.message : 'Authentication callback failed');
+        setCallbackError(err instanceof Error ? err.message : t('auth.callbackFailedFallback'));
         setIsProcessing(false);
       });
-  }, [effectiveSearch, handleCallback]);
+  }, [effectiveSearch, handleCallback, t]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-12 text-slate-100">
@@ -62,10 +64,8 @@ export function AuthCallbackPage({ onSuccess, onBackToLogin, search }: AuthCallb
               <Loader2 className="h-6 w-6 animate-spin" />
             </div>
             <div className="space-y-1">
-              <h1 className="text-lg font-semibold text-white">Completing Sign-In</h1>
-              <p className="text-sm text-slate-400">
-                Verifying PKCE state and exchanging authorization code...
-              </p>
+              <h1 className="text-lg font-semibold text-white">{t('auth.completingSignIn')}</h1>
+              <p className="text-sm text-slate-400">{t('auth.verifyingPkce')}</p>
             </div>
           </div>
         ) : callbackError ? (
@@ -75,7 +75,7 @@ export function AuthCallbackPage({ onSuccess, onBackToLogin, search }: AuthCallb
                 <AlertCircle className="h-5 w-5" />
               </div>
               <div className="space-y-1">
-                <h1 className="text-lg font-semibold text-white">Sign-In Failed</h1>
+                <h1 className="text-lg font-semibold text-white">{t('auth.signInFailed')}</h1>
                 <p className="text-sm text-rose-300" role="alert">
                   {callbackError}
                 </p>
@@ -87,7 +87,7 @@ export function AuthCallbackPage({ onSuccess, onBackToLogin, search }: AuthCallb
               className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-100 transition hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
               <ArrowLeft className="h-4 w-4" />
-              Back to Sign In
+              {t('auth.backToSignIn')}
             </button>
           </div>
         ) : (
@@ -95,7 +95,7 @@ export function AuthCallbackPage({ onSuccess, onBackToLogin, search }: AuthCallb
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-500/15 text-emerald-400">
               <ShieldCheck className="h-6 w-6" />
             </div>
-            <p className="text-sm text-slate-300">Signed in successfully. Redirecting...</p>
+            <p className="text-sm text-slate-300">{t('auth.signedInRedirecting')}</p>
           </div>
         )}
       </div>

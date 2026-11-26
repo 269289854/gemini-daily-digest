@@ -16,6 +16,7 @@ import {
 import { ApiError, type ApiClient } from '../api/client';
 import { SafeMarkdown, sanitizeHttpUrl } from '../components/SafeMarkdown';
 import { APP_ROUTES, DEFAULTS, SSE_RUN_STAGES, type SseRunStage } from '../constants/routes';
+import { type TranslateFn, type TranslationKey, useI18n } from '../i18n';
 import type { PlatformBridge } from '../platform/bridge';
 import type {
   DailyDigestDetail,
@@ -60,18 +61,7 @@ function formatLocalToday(): string {
   return `${y}-${m}-${d}`;
 }
 
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) {
-    return 'Unknown time';
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString();
-}
-
-function toUiError(err: unknown): UiErrorState {
+function toUiError(err: unknown, t: TranslateFn): UiErrorState {
   if (err instanceof ApiError) {
     return {
       code: err.code,
@@ -82,7 +72,14 @@ function toUiError(err: unknown): UiErrorState {
   if (err instanceof Error) {
     return { message: err.message };
   }
-  return { message: 'Unexpected error occurred' };
+  return { message: t('common.unexpectedError') };
+}
+
+function stageTranslationKey(stage: string): TranslationKey | null {
+  if ((RUN_STAGE_ORDER as readonly string[]).includes(stage)) {
+    return `sse.stage.${stage as SseRunStage}` as TranslationKey;
+  }
+  return null;
 }
 
 function priorityBadgeClass(priority: AlertPriority): string {
@@ -104,6 +101,10 @@ export function DailyDigestPage({
   initialDate,
   onNavigate,
 }: DailyDigestPageProps) {
+  const { t, formatDateTime, labelAlertPriority, labelRunStatus } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const [availableDigests, setAvailableDigests] = useState<DailyDigestSummary[]>([]);
   const [selectedDate, setSelectedDate] = useState<string>(initialDate ?? '');
   const [digest, setDigest] = useState<DailyDigestDetail | null>(null);
@@ -153,7 +154,7 @@ export function DailyDigestPage({
         return formatLocalToday();
       });
     } catch (err) {
-      setError(toUiError(err));
+      setError(toUiError(err, tRef.current));
       setSelectedDate((current) => current || formatLocalToday());
     } finally {
       setLoadingDates(false);
@@ -199,7 +200,7 @@ export function DailyDigestPage({
           setItemsByUrl({});
           setNotFoundForDate(true);
         } else {
-          setError(toUiError(err));
+          setError(toUiError(err, tRef.current));
         }
       } finally {
         setLoadingDigest(false);
@@ -252,7 +253,7 @@ export function DailyDigestPage({
         await loadDigest(selectedDate);
       }
     } catch (err) {
-      setError(toUiError(err));
+      setError(toUiError(err, t));
     } finally {
       setTriggeringRun(false);
     }
@@ -276,7 +277,7 @@ export function DailyDigestPage({
       }, 2500);
     } catch (err) {
       setCopyStatus('idle');
-      setError(toUiError(err));
+      setError(toUiError(err, t));
     }
   };
 
@@ -309,7 +310,7 @@ export function DailyDigestPage({
       if (!resolved) {
         setError({
           code: ErrorCode.NOT_FOUND,
-          message: `Cannot bookmark "${item.title}" because its indexed item record was not found.`,
+          message: t('daily.bookmarkMissingError', { title: item.title }),
         });
         return;
       }
@@ -327,7 +328,7 @@ export function DailyDigestPage({
         setItemsByUrl((prev) => ({ ...prev, [updated.canonicalUrl]: updated }));
       }
     } catch (err) {
-      setError(toUiError(err));
+      setError(toUiError(err, t));
     } finally {
       setBookmarkBusyUrl(null);
     }
@@ -362,6 +363,7 @@ export function DailyDigestPage({
   const activeStageIndex = latestRunProgress
     ? RUN_STAGE_ORDER.indexOf(latestRunProgress.stage)
     : -1;
+  const activeStageKey = latestRunProgress ? stageTranslationKey(latestRunProgress.stage) : null;
 
   return (
     <div className="space-y-6">
@@ -369,19 +371,17 @@ export function DailyDigestPage({
       <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-4 sm:p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-1">
-            <h1 className="text-xl font-bold tracking-tight text-white">Daily Digest</h1>
-            <p className="text-xs text-slate-400">
-              AI-synthesized ecosystem briefing, watchlist highlights, and per-source intelligence.
-            </p>
+            <h1 className="text-xl font-bold tracking-tight text-white">{t('daily.title')}</h1>
+            <p className="text-xs text-slate-400">{t('daily.subtitle')}</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 rounded-lg border border-slate-700/80 bg-slate-950/70 px-3 py-1.5 text-xs text-slate-200">
               <Calendar className="h-4 w-4 text-indigo-400" />
-              <span className="sr-only">Digest Date</span>
+              <span className="sr-only">{t('daily.digestDateAria')}</span>
               <input
                 type="date"
-                aria-label="Digest Date"
+                aria-label={t('daily.digestDateAria')}
                 value={selectedDate}
                 onChange={(event) => setSelectedDate(event.target.value)}
                 className="bg-transparent text-xs text-slate-100 focus:outline-none"
@@ -390,7 +390,7 @@ export function DailyDigestPage({
 
             {availableDigests.length > 0 && (
               <select
-                aria-label="Available Digest Dates"
+                aria-label={t('daily.availableDatesAria')}
                 value={
                   availableDigests.some((d) => d.digestDate === selectedDate) ? selectedDate : ''
                 }
@@ -402,11 +402,11 @@ export function DailyDigestPage({
                 className="rounded-lg border border-slate-700/80 bg-slate-950/70 px-3 py-1.5 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
               >
                 <option value="" disabled>
-                  Select saved date...
+                  {t('daily.selectSavedDate')}
                 </option>
                 {availableDigests.map((summary) => (
                   <option key={summary.id} value={summary.digestDate}>
-                    {summary.digestDate} ({summary.itemCount} items)
+                    {summary.digestDate} ({t('common.itemsCount', { count: summary.itemCount })})
                   </option>
                 ))}
               </select>
@@ -419,7 +419,7 @@ export function DailyDigestPage({
                 onChange={(event) => setForceRefresh(event.target.checked)}
                 className="rounded border-slate-600 bg-slate-900 text-indigo-500 focus:ring-indigo-500"
               />
-              Force refresh
+              {t('daily.forceRefresh')}
             </label>
 
             <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-300">
@@ -429,7 +429,7 @@ export function DailyDigestPage({
                 onChange={(event) => setNotifyOnRun(event.target.checked)}
                 className="rounded border-slate-600 bg-slate-900 text-indigo-500 focus:ring-indigo-500"
               />
-              Notify
+              {t('daily.notify')}
             </label>
 
             <button
@@ -443,7 +443,7 @@ export function DailyDigestPage({
               ) : (
                 <Play className="h-3.5 w-3.5" />
               )}
-              {triggeringRun ? 'Running...' : 'Run Now'}
+              {triggeringRun ? t('daily.running') : t('daily.runNow')}
             </button>
           </div>
         </div>
@@ -452,7 +452,7 @@ export function DailyDigestPage({
         {availableDigests.length > 0 && (
           <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-800/80 pt-3">
             <span className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-              Recent Dates:
+              {t('daily.recentDates')}
             </span>
             {availableDigests.slice(0, 8).map((summary) => {
               const active = summary.digestDate === selectedDate;
@@ -488,15 +488,19 @@ export function DailyDigestPage({
                   }`}
                 />
                 <span>
-                  Run <span className="font-mono">{latestRunProgress.runId.slice(0, 8)}</span> •{' '}
-                  Stage: <strong className="text-white">{latestRunProgress.stage}</strong>
+                  {t('daily.runLabel')}{' '}
+                  <span className="font-mono">{latestRunProgress.runId.slice(0, 8)}</span> •{' '}
+                  {t('daily.stageLabel')}{' '}
+                  <strong className="text-white">
+                    {activeStageKey ? t(activeStageKey) : latestRunProgress.stage}
+                  </strong>
                 </span>
               </div>
               <div className="flex items-center gap-3 text-slate-300">
-                <span>Fetched: {latestRunProgress.itemsFetched}</span>
-                <span>New: {latestRunProgress.itemsNew}</span>
+                <span>{t('daily.fetchedCount', { count: latestRunProgress.itemsFetched })}</span>
+                <span>{t('daily.newCount', { count: latestRunProgress.itemsNew })}</span>
                 <span className="rounded bg-slate-800 px-2 py-0.5 font-mono text-[11px]">
-                  {latestRunProgress.status}
+                  {labelRunStatus(latestRunProgress.status)}
                 </span>
               </div>
             </div>
@@ -510,7 +514,9 @@ export function DailyDigestPage({
                         done ? 'bg-indigo-500' : 'bg-slate-800'
                       }`}
                     />
-                    <div className="truncate text-center text-[10px] text-slate-400">{stage}</div>
+                    <div className="truncate text-center text-[10px] text-slate-400">
+                      {t(`sse.stage.${stage}` as TranslationKey)}
+                    </div>
                   </div>
                 );
               })}
@@ -537,7 +543,7 @@ export function DailyDigestPage({
               </div>
               {error.requestId && (
                 <div className="font-mono text-xs text-rose-300/80">
-                  Request ID: {error.requestId}
+                  {t('common.requestId', { id: error.requestId })}
                 </div>
               )}
             </div>
@@ -547,7 +553,7 @@ export function DailyDigestPage({
             onClick={() => setError(null)}
             className="text-xs text-rose-300 hover:text-white"
           >
-            Dismiss
+            {t('common.dismiss')}
           </button>
         </div>
       )}
@@ -556,7 +562,7 @@ export function DailyDigestPage({
       {(loadingDates || loadingDigest) && !digest && (
         <div className="flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-900/50 py-14 text-sm text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
-          Loading daily digest...
+          {t('daily.loading')}
         </div>
       )}
 
@@ -565,12 +571,9 @@ export function DailyDigestPage({
         <div className="rounded-xl border border-dashed border-slate-700 bg-slate-900/40 p-8 text-center">
           <Sparkles className="mx-auto h-8 w-8 text-indigo-400" />
           <h2 className="mt-3 text-base font-semibold text-white">
-            No digest generated for {selectedDate}
+            {t('daily.emptyTitle', { date: selectedDate })}
           </h2>
-          <p className="mx-auto mt-1 max-w-md text-xs text-slate-400">
-            Configure your sources and AI model in Settings, or trigger an immediate run to collect
-            and summarize updates for this date.
-          </p>
+          <p className="mx-auto mt-1 max-w-md text-xs text-slate-400">{t('daily.emptyDesc')}</p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
             <button
               type="button"
@@ -579,7 +582,7 @@ export function DailyDigestPage({
               className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
             >
               <Play className="h-3.5 w-3.5" />
-              Trigger First Run
+              {t('daily.triggerFirstRun')}
             </button>
             {onNavigate && (
               <button
@@ -587,7 +590,7 @@ export function DailyDigestPage({
                 onClick={() => onNavigate(APP_ROUTES.SETTINGS)}
                 className="rounded-lg border border-slate-700 bg-slate-800/80 px-4 py-2 text-xs font-medium text-slate-200 hover:bg-slate-700"
               >
-                Open Settings
+                {t('layout.openSettings')}
               </button>
             )}
           </div>
@@ -600,14 +603,12 @@ export function DailyDigestPage({
           {/* Urgent / High Watchlist Highlight Banner */}
           {highlightedItems.length > 0 && (
             <section
-              aria-label="Watchlist Highlights"
+              aria-label={t('daily.highlightsAria')}
               className="rounded-xl border border-rose-500/40 bg-gradient-to-r from-rose-950/60 via-amber-950/40 to-slate-900/80 p-4 sm:p-5"
             >
               <div className="flex items-center gap-2 text-sm font-semibold text-rose-200">
                 <Flame className="h-4 w-4 text-rose-400" />
-                <span>
-                  Watchlist Priority Alerts ({highlightedItems.length})
-                </span>
+                <span>{t('daily.highlightsTitle', { count: highlightedItems.length })}</span>
               </div>
               <div className="mt-3 grid gap-2.5 sm:grid-cols-2">
                 {highlightedItems.map((item) => {
@@ -624,10 +625,11 @@ export function DailyDigestPage({
                               item.matchResult.priority,
                             )}`}
                           >
-                            {item.matchResult.priority}
+                            {labelAlertPriority(item.matchResult.priority)}
                           </span>
                           <span className="text-[11px] text-slate-400">
-                            {item.sourceName ?? 'Source'} • Score {item.matchResult.importanceScore}
+                            {item.sourceName ?? t('daily.sourceFallback')} • {t('common.score')}{' '}
+                            {item.matchResult.importanceScore}
                           </span>
                         </div>
                         <div className="text-sm font-medium text-white">{item.title}</div>
@@ -650,7 +652,7 @@ export function DailyDigestPage({
                           onClick={() => handleOpenExternal(safeUrl)}
                           className="inline-flex w-fit items-center gap-1 text-xs font-medium text-indigo-300 hover:text-indigo-200"
                         >
-                          Read Original
+                          {t('daily.readOriginal')}
                           <ExternalLink className="h-3 w-3" />
                         </button>
                       )}
@@ -670,11 +672,11 @@ export function DailyDigestPage({
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
               <div>
                 <span className="font-semibold text-amber-100">
-                  Deterministic Fallback Summarization Active
+                  {t('daily.fallbackActiveTitle')}
                 </span>
                 <p className="mt-0.5 text-amber-200/90">
-                  AI summarization was unavailable or unconfigured; this digest was synthesized
-                  deterministically using <span className="font-mono">{digest.modelUsed}</span>.
+                  {t('daily.fallbackActiveDesc')}{' '}
+                  <span className="font-mono">{digest.modelUsed}</span>.
                 </p>
               </div>
             </div>
@@ -694,10 +696,13 @@ export function DailyDigestPage({
                 </div>
                 <h2 className="text-lg font-bold text-white">{digest.title}</h2>
                 <div className="flex flex-wrap gap-4 text-xs text-slate-400">
-                  <span>Items: {digest.itemCount}</span>
-                  <span>Highlighted: {digest.highlightedCount}</span>
+                  <span>{t('daily.itemsStat', { count: digest.itemCount })}</span>
+                  <span>{t('daily.highlightedStat', { count: digest.highlightedCount })}</span>
                   <span>
-                    Tokens: {digest.promptTokens} in / {digest.completionTokens} out
+                    {t('daily.tokensStat', {
+                      prompt: digest.promptTokens,
+                      completion: digest.completionTokens,
+                    })}
                   </span>
                 </div>
               </div>
@@ -711,12 +716,16 @@ export function DailyDigestPage({
                 {copyStatus === 'copied' ? (
                   <>
                     <Check className="h-3.5 w-3.5 text-emerald-400" />
-                    <span className="text-emerald-300">Copied!</span>
+                    <span className="text-emerald-300">{t('common.copied')}</span>
                   </>
                 ) : (
                   <>
                     <Copy className="h-3.5 w-3.5" />
-                    <span>{copyStatus === 'copying' ? 'Copying...' : 'Copy Markdown'}</span>
+                    <span>
+                      {copyStatus === 'copying'
+                        ? t('daily.copyingMarkdown')
+                        : t('daily.copyMarkdown')}
+                    </span>
                   </>
                 )}
               </button>
@@ -730,7 +739,7 @@ export function DailyDigestPage({
           {/* Categorized Source Sections */}
           <section className="space-y-4">
             <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-400">
-              Source Sections ({digest.sections.length})
+              {t('daily.sourceSectionsTitle', { count: digest.sections.length })}
             </h3>
             {digest.sections.map((section, idx) => (
               <article
@@ -756,7 +765,9 @@ export function DailyDigestPage({
                       <h4 className="text-base font-semibold text-white">{section.sourceName}</h4>
                     )}
                   </div>
-                  <span className="text-xs text-slate-400">{section.items.length} items</span>
+                  <span className="text-xs text-slate-400">
+                    {t('common.itemsCount', { count: section.items.length })}
+                  </span>
                 </div>
 
                 {section.summaryMarkdown && (
@@ -768,7 +779,7 @@ export function DailyDigestPage({
                 {section.keyPoints.length > 0 && (
                   <div className="mt-3 rounded-lg border border-slate-800/80 bg-slate-950/50 p-3">
                     <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">
-                      Key Points
+                      {t('daily.keyPoints')}
                     </div>
                     <ul className="mt-1.5 list-disc space-y-1 pl-4 text-xs text-slate-300">
                       {section.keyPoints.map((point, pointIdx) => (
@@ -799,19 +810,19 @@ export function DailyDigestPage({
                                     item.matchResult.priority,
                                   )}`}
                                 >
-                                  {item.matchResult.priority}
+                                  {labelAlertPriority(item.matchResult.priority)}
                                 </span>
                                 <span className="text-[11px] text-slate-400">
-                                  Score: {item.matchResult.importanceScore}
+                                  {t('common.score')}: {item.matchResult.importanceScore}
                                 </span>
                                 {item.author && (
                                   <span className="text-[11px] text-slate-400">
-                                    by {item.author}
+                                    {t('common.byAuthor', { author: item.author })}
                                   </span>
                                 )}
                                 {item.publishedAt && (
                                   <span className="text-[11px] text-slate-500">
-                                    {formatDateTime(item.publishedAt)}
+                                    {formatDateTime(item.publishedAt) || t('common.unknownTime')}
                                   </span>
                                 )}
                               </div>
@@ -861,7 +872,11 @@ export function DailyDigestPage({
                                 type="button"
                                 onClick={() => void handleToggleBookmark(item)}
                                 disabled={isBookmarkBusy}
-                                aria-label={isBookmarked ? 'Remove bookmark' : 'Bookmark item'}
+                                aria-label={
+                                  isBookmarked
+                                    ? t('common.bookmarkAriaRemove')
+                                    : t('common.bookmarkAriaAdd')
+                                }
                                 className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors ${
                                   isBookmarked
                                     ? 'border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
@@ -875,7 +890,7 @@ export function DailyDigestPage({
                                 ) : (
                                   <Bookmark className="h-3.5 w-3.5" />
                                 )}
-                                {isBookmarked ? 'Bookmarked' : 'Bookmark'}
+                                {isBookmarked ? t('common.bookmarked') : t('common.bookmark')}
                               </button>
                             </div>
                           </div>

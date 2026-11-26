@@ -9,6 +9,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use digest_core::constants::SECRET_MASK_REDACTED_PLACEHOLDER;
 use digest_core::domain::{DeliveryStatus, FetchOutcome, NotificationChannelType, SseEventType};
 use digest_core::error::CoreError;
+use digest_core::traits::AiModelOption;
 use http::HeaderMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
@@ -102,6 +103,40 @@ pub struct AiTestResult {
     pub message: String,
 }
 
+/// Request payload for `POST /api/v1/settings/ai/models` (redacted `Debug`).
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelsRequest {
+    pub base_url: Option<String>,
+    pub api_key: Option<String>,
+    #[serde(default)]
+    pub clear_api_key: bool,
+}
+
+impl fmt::Debug for AiModelsRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let redacted = self
+            .api_key
+            .as_ref()
+            .filter(|k| !k.is_empty())
+            .map(|_| SECRET_MASK_REDACTED_PLACEHOLDER);
+        f.debug_struct("AiModelsRequest")
+            .field("base_url", &self.base_url)
+            .field("api_key", &redacted)
+            .field("clear_api_key", &self.clear_api_key)
+            .finish()
+    }
+}
+
+/// Discovered model list returned by `POST /api/v1/settings/ai/models`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelsResult {
+    pub models: Vec<AiModelOption>,
+    pub endpoint_url: String,
+    pub latency_ms: u64,
+}
+
 /// Live preview outcome returned by `POST /api/v1/settings/sources/{id}/test`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,6 +174,18 @@ pub trait ExecutionOrchestrator: Send + Sync {
         req: AiTestRequest,
     ) -> Result<AiTestResult, CoreError>;
 
+    async fn list_ai_models(
+        &self,
+        _user_id: Uuid,
+        _req: AiModelsRequest,
+    ) -> Result<AiModelsResult, CoreError> {
+        Ok(AiModelsResult {
+            models: Vec::new(),
+            endpoint_url: String::new(),
+            latency_ms: 0,
+        })
+    }
+
     async fn test_source(
         &self,
         user_id: Uuid,
@@ -175,6 +222,18 @@ mod tests {
         };
         let rendered = format!("{req:?}");
         assert!(!rendered.contains("test-secret-api-key-value"));
+        assert!(rendered.contains(SECRET_MASK_REDACTED_PLACEHOLDER));
+    }
+
+    #[test]
+    fn ai_models_request_redacts_api_key_in_debug() {
+        let req = AiModelsRequest {
+            base_url: Some("https://api.deepseek.com".to_owned()),
+            api_key: Some("test-secret-models-key".to_owned()),
+            clear_api_key: false,
+        };
+        let rendered = format!("{req:?}");
+        assert!(!rendered.contains("test-secret-models-key"));
         assert!(rendered.contains(SECRET_MASK_REDACTED_PLACEHOLDER));
     }
 }

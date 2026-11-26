@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
   Check,
   CheckCircle2,
@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { normalizeBaseUrl } from '../../api/client';
 import { DEFAULTS, MCP_CLIENT_TARGETS, type McpClientTarget } from '../../constants/routes';
+import { type TranslationKey, useI18n } from '../../i18n';
 import { type McpBridgeStatus, type PlatformBridge, PlatformRuntime } from '../../platform/bridge';
 import { McpAccessMode } from '../../types/enums';
 
@@ -25,49 +26,57 @@ export interface BuildMcpSnippetOptions {
   serverBaseUrl: string;
 }
 
-const MCP_MODE_OPTIONS: { value: McpAccessMode; label: string; description: string }[] = [
+const MCP_MODE_OPTIONS: {
+  value: McpAccessMode;
+  labelKey: TranslationKey;
+  descKey: TranslationKey;
+}[] = [
   {
     value: McpAccessMode.DISABLED,
-    label: 'Disabled',
-    description: 'Block all local MCP tool invocations.',
+    labelKey: 'mcp.modeDisabledLabel',
+    descKey: 'mcp.modeDisabledDesc',
   },
   {
     value: McpAccessMode.READ_ONLY,
-    label: 'Read-Only',
-    description: 'Allow querying digests, sources, bookmarks, and stats only.',
+    labelKey: 'mcp.modeReadOnlyLabel',
+    descKey: 'mcp.modeReadOnlyDesc',
   },
   {
     value: McpAccessMode.READ_WRITE,
-    label: 'Read / Write',
-    description: 'Allow read tools plus triggering runs, adding sources, and updating schedules.',
+    labelKey: 'mcp.modeReadWriteLabel',
+    descKey: 'mcp.modeReadWriteDesc',
   },
 ];
 
-const MCP_TARGET_META: { target: McpClientTarget; label: string; hint: string }[] = [
+const MCP_TARGET_META: {
+  target: McpClientTarget;
+  labelKey: TranslationKey;
+  hintKey: TranslationKey;
+}[] = [
   {
     target: MCP_CLIENT_TARGETS.GEMINI_CLI,
-    label: 'Gemini CLI',
-    hint: '~/.gemini/settings.json (mcpServers)',
+    labelKey: 'mcp.targetGeminiCli',
+    hintKey: 'mcp.targetGeminiCliHint',
   },
   {
     target: MCP_CLIENT_TARGETS.ANTIGRAVITY,
-    label: 'Antigravity',
-    hint: 'Antigravity MCP configuration (Streamable HTTP)',
+    labelKey: 'mcp.targetAntigravity',
+    hintKey: 'mcp.targetAntigravityHint',
   },
   {
     target: MCP_CLIENT_TARGETS.CHATGPT,
-    label: 'ChatGPT',
-    hint: 'Custom MCP connector URL + Bearer token',
+    labelKey: 'mcp.targetChatGpt',
+    hintKey: 'mcp.targetChatGptHint',
   },
   {
     target: MCP_CLIENT_TARGETS.CLAUDE_DESKTOP,
-    label: 'Claude Desktop',
-    hint: 'claude_desktop_config.json (mcpServers)',
+    labelKey: 'mcp.targetClaudeDesktop',
+    hintKey: 'mcp.targetClaudeDesktopHint',
   },
   {
     target: MCP_CLIENT_TARGETS.CODEX,
-    label: 'Codex',
-    hint: 'Codex mcp_servers JSON configuration',
+    labelKey: 'mcp.targetCodex',
+    hintKey: 'mcp.targetCodexHint',
   },
 ];
 
@@ -182,6 +191,10 @@ export function DesktopMcpPanel({
   serverBaseUrl,
   onServerBaseUrlChange,
 }: DesktopMcpPanelProps) {
+  const { t } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const initialMcp = bridge.getMcpConfig();
   const isDesktopBridgeAvailable =
     bridge.runtime === PlatformRuntime.DESKTOP && typeof bridge.getMcpBridgeStatus === 'function';
@@ -211,7 +224,7 @@ export function DesktopMcpPanel({
       const nextStatus = await bridge.getMcpBridgeStatus();
       setBridgeStatus(nextStatus);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch Desktop MCP bridge status');
+      setError(err instanceof Error ? err.message : tRef.current('mcp.bridgeFetchError'));
     } finally {
       setBridgeLoading(false);
     }
@@ -233,7 +246,7 @@ export function DesktopMcpPanel({
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch Desktop MCP bridge status');
+          setError(err instanceof Error ? err.message : tRef.current('mcp.bridgeFetchError'));
         }
       })
       .finally(() => {
@@ -259,15 +272,13 @@ export function DesktopMcpPanel({
       onServerBaseUrlChange(normalized);
       setDraftBaseUrl(normalized);
       setStatusMessage(
-        normalized
-          ? `Server Base URL saved (${normalized}).`
-          : 'Server Base URL reset to same-origin relative mode.',
+        normalized ? t('auth.serverUrlSet', { url: normalized }) : t('auth.serverUrlReset'),
       );
       if (isDesktopBridgeAvailable) {
         void refreshBridgeStatus();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid server base URL');
+      setError(err instanceof Error ? err.message : t('auth.invalidServerUrl'));
     }
   };
 
@@ -278,12 +289,12 @@ export function DesktopMcpPanel({
 
     const numPort = Number(mcpPortInput);
     if (!Number.isInteger(numPort) || numPort < 1 || numPort > 65535) {
-      setError('MCP HTTP Port must be an integer between 1 and 65535.');
+      setError(t('mcp.portError'));
       return;
     }
 
     bridge.setMcpConfig(mcpMode, numPort);
-    setStatusMessage(`Desktop MCP settings saved (${mcpMode} on port ${numPort}).`);
+    setStatusMessage(t('mcp.savedMsg', { mode: mcpMode, port: numPort }));
     if (isDesktopBridgeAvailable) {
       void refreshBridgeStatus();
     }
@@ -299,9 +310,9 @@ export function DesktopMcpPanel({
     try {
       const rawToken = await bridge.getMcpLocalToken();
       await bridge.copyToClipboard(rawToken);
-      setStatusMessage('Copied local MCP Bearer token to clipboard.');
+      setStatusMessage(t('mcp.copiedToken'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to copy local MCP token');
+      setError(err instanceof Error ? err.message : t('mcp.copyTokenError'));
     } finally {
       setBridgeBusy(false);
     }
@@ -317,24 +328,30 @@ export function DesktopMcpPanel({
     try {
       const updatedStatus = await bridge.rotateMcpToken();
       setBridgeStatus(updatedStatus);
-      setStatusMessage('Rotated local MCP Bearer token.');
+      setStatusMessage(t('mcp.rotatedToken'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to rotate local MCP token');
+      setError(err instanceof Error ? err.message : t('mcp.rotateTokenError'));
     } finally {
       setBridgeBusy(false);
     }
   };
 
-  const handleCopySnippet = async (target: McpClientTarget, snippet: string) => {
+  const handleCopySnippet = async (
+    target: McpClientTarget,
+    targetLabel: string,
+    snippet: string,
+  ) => {
     setError(null);
     try {
       await bridge.copyToClipboard(snippet);
       setCopiedTarget(target);
-      setStatusMessage(`Copied ${target} MCP JSON configuration.`);
+      setStatusMessage(t('mcp.copiedSnippet', { target: targetLabel }));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to copy MCP configuration');
+      setError(err instanceof Error ? err.message : t('mcp.copySnippetError'));
     }
   };
+
+  const activeModeMeta = MCP_MODE_OPTIONS.find((opt) => opt.value === mcpMode);
 
   return (
     <div className="space-y-6">
@@ -363,23 +380,25 @@ export function DesktopMcpPanel({
         <div className="flex items-center gap-2">
           <Globe className="h-5 w-5 text-indigo-400" />
           <div>
-            <h2 className="text-base font-semibold text-white">Server Base URL</h2>
+            <h2 className="text-base font-semibold text-white">{t('mcp.serverUrlTitle')}</h2>
             <p className="text-xs text-slate-400">
-              Leave empty for Web same-origin relative paths, or set{' '}
-              <span className="font-mono">{DEFAULTS.DEFAULT_LOCAL_SERVER_URL}</span> / custom HTTPS
-              endpoint for Desktop. Runtime: <span className="font-mono">{bridge.runtime}</span>.
+              {t('mcp.serverUrlDesc')}{' '}
+              <span className="font-mono">{DEFAULTS.DEFAULT_LOCAL_SERVER_URL}</span>{' '}
+              {t('mcp.serverUrlDescMid')} <span className="font-mono">{bridge.runtime}</span>.
             </p>
           </div>
         </div>
 
         <form onSubmit={handleSaveServerUrl} className="flex flex-wrap items-end gap-3">
           <label className="min-w-[260px] flex-1 space-y-1.5 text-xs">
-            <span className="font-medium text-slate-200">Backend Server URL</span>
+            <span className="font-medium text-slate-200">{t('mcp.backendUrl')}</span>
             <input
               type="text"
               value={draftBaseUrl}
               onChange={(e) => setDraftBaseUrl(e.target.value)}
-              placeholder={`Empty for relative, or ${DEFAULTS.DEFAULT_LOCAL_SERVER_URL}`}
+              placeholder={t('mcp.backendUrlPlaceholder', {
+                localUrl: DEFAULTS.DEFAULT_LOCAL_SERVER_URL,
+              })}
               className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder:text-slate-500"
             />
           </label>
@@ -387,7 +406,7 @@ export function DesktopMcpPanel({
             type="submit"
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500"
           >
-            Save Server URL
+            {t('mcp.saveServerUrlBtn')}
           </button>
         </form>
       </section>
@@ -397,10 +416,10 @@ export function DesktopMcpPanel({
         <div className="flex items-center gap-2">
           <ServerCog className="h-5 w-5 text-cyan-400" />
           <div>
-            <h2 className="text-base font-semibold text-white">Desktop Local MCP Server</h2>
+            <h2 className="text-base font-semibold text-white">{t('mcp.localMcpTitle')}</h2>
             <p className="text-xs text-slate-400">
-              Binds strictly to <span className="font-mono">{DEFAULTS.MCP_BIND_HOST}</span> and
-              enforces the selected capability guard.
+              {t('mcp.localMcpDescStart')}{' '}
+              <span className="font-mono">{DEFAULTS.MCP_BIND_HOST}</span> {t('mcp.localMcpDescEnd')}
             </p>
           </div>
         </div>
@@ -408,7 +427,7 @@ export function DesktopMcpPanel({
         <form onSubmit={handleSaveMcp} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">MCP Access Mode</span>
+              <span className="font-medium text-slate-200">{t('mcp.accessMode')}</span>
               <select
                 value={mcpMode}
                 onChange={(e) => setMcpMode(e.target.value as McpAccessMode)}
@@ -416,14 +435,14 @@ export function DesktopMcpPanel({
               >
                 {MCP_MODE_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
-                    {opt.label} ({opt.value})
+                    {t(opt.labelKey)} ({opt.value})
                   </option>
                 ))}
               </select>
             </label>
 
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">Local HTTP Port</span>
+              <span className="font-medium text-slate-200">{t('mcp.localPort')}</span>
               <input
                 type="number"
                 min="1"
@@ -437,14 +456,14 @@ export function DesktopMcpPanel({
           </div>
 
           <p className="text-xs text-slate-400">
-            {MCP_MODE_OPTIONS.find((opt) => opt.value === mcpMode)?.description}
+            {activeModeMeta ? t(activeModeMeta.descKey) : ''}
           </p>
 
           <button
             type="submit"
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500"
           >
-            Save MCP Settings
+            {t('mcp.saveMcpBtn')}
           </button>
         </form>
 
@@ -453,7 +472,7 @@ export function DesktopMcpPanel({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold uppercase tracking-wide text-slate-300">
-                  Desktop Bridge Status
+                  {t('mcp.bridgeStatus')}
                 </span>
                 {bridgeStatus && (
                   <span
@@ -463,7 +482,7 @@ export function DesktopMcpPanel({
                         : 'border border-amber-500/40 bg-amber-500/15 text-amber-300'
                     }`}
                   >
-                    {bridgeStatus.running ? 'Running' : 'Stopped'}
+                    {bridgeStatus.running ? t('mcp.running') : t('mcp.stopped')}
                   </span>
                 )}
               </div>
@@ -477,7 +496,7 @@ export function DesktopMcpPanel({
                     className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <KeyRound className="h-3.5 w-3.5 text-cyan-400" />
-                    Copy Local Token
+                    {t('mcp.copyToken')}
                   </button>
                 )}
                 {bridge.rotateMcpToken && (
@@ -488,7 +507,7 @@ export function DesktopMcpPanel({
                     className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <RefreshCw className="h-3.5 w-3.5 text-amber-400" />
-                    Rotate Token
+                    {t('mcp.rotateToken')}
                   </button>
                 )}
                 <button
@@ -498,7 +517,7 @@ export function DesktopMcpPanel({
                   className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <RefreshCw className={`h-3.5 w-3.5 ${bridgeLoading ? 'animate-spin' : ''}`} />
-                  Refresh
+                  {t('common.refresh')}
                 </button>
               </div>
             </div>
@@ -506,21 +525,21 @@ export function DesktopMcpPanel({
             {bridgeStatus ? (
               <div className="grid gap-2 text-xs text-slate-300 sm:grid-cols-3">
                 <div>
-                  <span className="text-slate-500">Endpoint: </span>
+                  <span className="text-slate-500">{t('mcp.endpoint')} </span>
                   <span className="font-mono text-slate-200">{bridgeStatus.endpointUrl}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500">Mode: </span>
+                  <span className="text-slate-500">{t('mcp.mode')} </span>
                   <span className="font-mono text-slate-200">{bridgeStatus.mode}</span>
                 </div>
                 <div>
-                  <span className="text-slate-500">Token Hint: </span>
+                  <span className="text-slate-500">{t('mcp.tokenHint')} </span>
                   <span className="font-mono text-slate-200">{bridgeStatus.tokenHint}</span>
                 </div>
               </div>
             ) : (
               <p className="text-xs text-slate-400">
-                {bridgeLoading ? 'Loading Desktop MCP bridge status...' : 'Bridge status unavailable.'}
+                {bridgeLoading ? t('mcp.loadingBridge') : t('mcp.bridgeUnavailable')}
               </p>
             )}
 
@@ -539,20 +558,21 @@ export function DesktopMcpPanel({
       {/* One-Click Client Snippets */}
       <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
         <div>
-          <h2 className="text-base font-semibold text-white">MCP Client Config Snippets</h2>
+          <h2 className="text-base font-semibold text-white">{t('mcp.snippetsTitle')}</h2>
           <p className="mt-0.5 text-xs text-slate-400">
-            Ready-to-paste JSON snippets with <span className="font-mono">YOUR_MCP_TOKEN</span>{' '}
-            placeholders (no real secrets included).
+            {t('mcp.snippetsDesc')} <span className="font-mono">YOUR_MCP_TOKEN</span>{' '}
+            {t('mcp.snippetsDescEnd')}
           </p>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          {MCP_TARGET_META.map(({ target, label, hint }) => {
+          {MCP_TARGET_META.map(({ target, labelKey, hintKey }) => {
             const snippet = buildMcpClientSnippet(target, {
               mcpPort: parsedPort,
               serverBaseUrl: draftBaseUrl,
             });
             const isCopied = copiedTarget === target;
+            const targetLabel = t(labelKey);
 
             return (
               <div
@@ -561,23 +581,23 @@ export function DesktopMcpPanel({
               >
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div>
-                    <h3 className="text-sm font-semibold text-white">{label}</h3>
-                    <p className="text-[11px] text-slate-400">{hint}</p>
+                    <h3 className="text-sm font-semibold text-white">{targetLabel}</h3>
+                    <p className="text-[11px] text-slate-400">{t(hintKey)}</p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => void handleCopySnippet(target, snippet)}
+                    onClick={() => void handleCopySnippet(target, targetLabel, snippet)}
                     className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-700"
                   >
                     {isCopied ? (
                       <>
                         <Check className="h-3.5 w-3.5 text-emerald-400" />
-                        Copied
+                        {t('mcp.copiedShort')}
                       </>
                     ) : (
                       <>
                         <Copy className="h-3.5 w-3.5" />
-                        Copy JSON
+                        {t('mcp.copyJson')}
                       </>
                     )}
                   </button>

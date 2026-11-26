@@ -1,7 +1,8 @@
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { CheckCircle2, Edit3, Plus, Send, Trash2, XCircle } from 'lucide-react';
 import { ApiError, type ApiClient } from '../../api/client';
 import { DEFAULTS } from '../../constants/routes';
+import { type TranslateFn, useI18n } from '../../i18n';
 import type {
   ChannelConfigPayload,
   ChannelTestResult,
@@ -15,23 +16,25 @@ export interface ChannelsPanelProps {
   api: ApiClient;
 }
 
-const CHANNEL_TYPE_OPTIONS: { value: NotificationChannelType; label: string }[] = [
-  { value: NotificationChannelType.SMTP, label: 'Email (SMTP)' },
-  { value: NotificationChannelType.TELEGRAM, label: 'Telegram Bot' },
-  { value: NotificationChannelType.FEISHU, label: 'Feishu / Lark Webhook' },
-  { value: NotificationChannelType.DINGTALK, label: 'DingTalk Webhook' },
-  { value: NotificationChannelType.WECOM, label: 'WeCom Webhook' },
-  { value: NotificationChannelType.WEBHOOK, label: 'Generic Webhook' },
+const CHANNEL_TYPE_VALUES: readonly NotificationChannelType[] = [
+  NotificationChannelType.SMTP,
+  NotificationChannelType.TELEGRAM,
+  NotificationChannelType.FEISHU,
+  NotificationChannelType.DINGTALK,
+  NotificationChannelType.WECOM,
+  NotificationChannelType.WEBHOOK,
 ];
 
-function formatError(err: unknown): string {
+function formatError(err: unknown, t: TranslateFn): string {
   if (err instanceof ApiError) {
-    return err.requestId ? `${err.message} (Request ID: ${err.requestId})` : err.message;
+    return err.requestId
+      ? `${err.message} (${t('common.requestId', { id: err.requestId })})`
+      : err.message;
   }
   if (err instanceof Error) {
     return err.message;
   }
-  return 'Unexpected error';
+  return t('common.unexpectedError');
 }
 
 interface ChannelFormFields {
@@ -79,6 +82,7 @@ function emptyChannelFields(): ChannelFormFields {
 function buildConfigPayload(
   channelType: NotificationChannelType,
   fields: ChannelFormFields,
+  t: TranslateFn,
 ): { payload: ChannelConfigPayload | null; validationError: string | null } {
   switch (channelType) {
     case NotificationChannelType.SMTP: {
@@ -92,11 +96,11 @@ function buildConfigPayload(
       if (!host || !from || to.length === 0) {
         return {
           payload: null,
-          validationError: 'SMTP requires Host, From address, and at least one To recipient.',
+          validationError: t('channels.smtpRequired'),
         };
       }
       if (!Number.isInteger(port) || port < 1 || port > 65535) {
-        return { payload: null, validationError: 'SMTP Port must be between 1 and 65535.' };
+        return { payload: null, validationError: t('channels.smtpPortRange') };
       }
       return {
         payload: {
@@ -119,7 +123,7 @@ function buildConfigPayload(
       if (!botToken || !chatId) {
         return {
           payload: null,
-          validationError: 'Telegram requires both Bot Token and Chat ID.',
+          validationError: t('channels.telegramRequired'),
         };
       }
       return {
@@ -135,7 +139,7 @@ function buildConfigPayload(
     case NotificationChannelType.FEISHU: {
       const webhookUrl = fields.webhookUrl.trim();
       if (!webhookUrl) {
-        return { payload: null, validationError: 'Feishu requires Webhook URL.' };
+        return { payload: null, validationError: t('channels.feishuRequired') };
       }
       return {
         payload: {
@@ -149,7 +153,7 @@ function buildConfigPayload(
     case NotificationChannelType.DINGTALK: {
       const webhookUrl = fields.webhookUrl.trim();
       if (!webhookUrl) {
-        return { payload: null, validationError: 'DingTalk requires Webhook URL.' };
+        return { payload: null, validationError: t('channels.dingtalkRequired') };
       }
       return {
         payload: {
@@ -163,7 +167,7 @@ function buildConfigPayload(
     case NotificationChannelType.WECOM: {
       const webhookUrl = fields.webhookUrl.trim();
       if (!webhookUrl) {
-        return { payload: null, validationError: 'WeCom requires Webhook URL.' };
+        return { payload: null, validationError: t('channels.wecomRequired') };
       }
       return {
         payload: { webhookUrl },
@@ -174,7 +178,7 @@ function buildConfigPayload(
     case NotificationChannelType.WEBHOOK: {
       const url = fields.genericUrl.trim();
       if (!url) {
-        return { payload: null, validationError: 'Generic Webhook requires URL.' };
+        return { payload: null, validationError: t('channels.webhookRequired') };
       }
       return {
         payload: {
@@ -194,12 +198,13 @@ interface DynamicChannelFieldsProps {
 }
 
 function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicChannelFieldsProps) {
+  const { t } = useI18n();
   switch (channelType) {
     case NotificationChannelType.SMTP:
       return (
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">SMTP Host</span>
+            <span className="font-medium text-slate-200">{t('channels.smtpHost')}</span>
             <input
               type="text"
               value={fields.smtpHost}
@@ -209,7 +214,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
             />
           </label>
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">SMTP Port</span>
+            <span className="font-medium text-slate-200">{t('channels.smtpPort')}</span>
             <input
               type="number"
               min="1"
@@ -220,7 +225,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
             />
           </label>
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">Username (optional)</span>
+            <span className="font-medium text-slate-200">{t('channels.smtpUsername')}</span>
             <input
               type="text"
               value={fields.smtpUsername}
@@ -229,7 +234,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
             />
           </label>
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">Password (optional)</span>
+            <span className="font-medium text-slate-200">{t('channels.smtpPassword')}</span>
             <input
               type="password"
               autoComplete="new-password"
@@ -239,7 +244,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
             />
           </label>
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">From Address</span>
+            <span className="font-medium text-slate-200">{t('channels.smtpFrom')}</span>
             <input
               type="email"
               value={fields.smtpFrom}
@@ -249,7 +254,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
             />
           </label>
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">To Recipients (comma-separated)</span>
+            <span className="font-medium text-slate-200">{t('channels.smtpTo')}</span>
             <input
               type="text"
               value={fields.smtpTo}
@@ -266,7 +271,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
                 onChange={(e) => onChange({ smtpUseStarttls: e.target.checked })}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
-              <span>Use STARTTLS</span>
+              <span>{t('channels.smtpStarttls')}</span>
             </label>
             <label className="inline-flex items-center gap-2 text-xs text-slate-300">
               <input
@@ -275,7 +280,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
                 onChange={(e) => onChange({ smtpUseTls: e.target.checked })}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
-              <span>Use Implicit TLS</span>
+              <span>{t('channels.smtpTls')}</span>
             </label>
           </div>
         </div>
@@ -285,7 +290,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
       return (
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">Bot Token</span>
+            <span className="font-medium text-slate-200">{t('channels.tgBotToken')}</span>
             <input
               type="password"
               autoComplete="new-password"
@@ -295,7 +300,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
             />
           </label>
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">Chat ID</span>
+            <span className="font-medium text-slate-200">{t('channels.tgChatId')}</span>
             <input
               type="text"
               value={fields.tgChatId}
@@ -305,7 +310,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
             />
           </label>
           <label className="block space-y-1 text-xs sm:col-span-2">
-            <span className="font-medium text-slate-200">API Base URL (optional)</span>
+            <span className="font-medium text-slate-200">{t('channels.tgApiBaseUrl')}</span>
             <input
               type="url"
               value={fields.tgApiBaseUrl}
@@ -322,7 +327,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
       return (
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">Webhook URL</span>
+            <span className="font-medium text-slate-200">{t('channels.webhookUrl')}</span>
             <input
               type="url"
               value={fields.webhookUrl}
@@ -332,7 +337,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
             />
           </label>
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">Signing Secret (optional)</span>
+            <span className="font-medium text-slate-200">{t('channels.signingSecret')}</span>
             <input
               type="password"
               autoComplete="new-password"
@@ -347,7 +352,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
     case NotificationChannelType.WECOM:
       return (
         <label className="block space-y-1 text-xs">
-          <span className="font-medium text-slate-200">WeCom Webhook URL</span>
+          <span className="font-medium text-slate-200">{t('channels.wecomWebhookUrl')}</span>
           <input
             type="url"
             value={fields.webhookUrl}
@@ -362,7 +367,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
       return (
         <div className="grid gap-3 sm:grid-cols-2">
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">Webhook URL</span>
+            <span className="font-medium text-slate-200">{t('channels.webhookUrl')}</span>
             <input
               type="url"
               value={fields.genericUrl}
@@ -372,7 +377,7 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
             />
           </label>
           <label className="block space-y-1 text-xs">
-            <span className="font-medium text-slate-200">HMAC Secret (optional)</span>
+            <span className="font-medium text-slate-200">{t('channels.hmacSecret')}</span>
             <input
               type="password"
               autoComplete="new-password"
@@ -387,6 +392,10 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
 }
 
 export function ChannelsPanel({ api }: ChannelsPanelProps) {
+  const { t, formatDateTime, labelChannelType, labelDeliveryStatus } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const [channels, setChannels] = useState<NotificationChannelView[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -420,7 +429,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
       const list = await api.listChannels();
       setChannels(list);
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, tRef.current));
     } finally {
       setLoading(false);
     }
@@ -436,13 +445,13 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
     setStatusMessage(null);
 
     if (!addName.trim()) {
-      setError('Channel name is required.');
+      setError(t('channels.nameRequired'));
       return;
     }
 
-    const { payload, validationError } = buildConfigPayload(addType, addFields);
+    const { payload, validationError } = buildConfigPayload(addType, addFields, t);
     if (validationError || !payload) {
-      setError(validationError ?? 'Invalid channel configuration.');
+      setError(validationError ?? t('channels.invalidConfig'));
       return;
     }
 
@@ -461,9 +470,9 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
       setChannels((prev) => [created, ...prev]);
       setAddName('');
       setAddFields(emptyChannelFields());
-      setStatusMessage(`Created notification channel "${created.name}".`);
+      setStatusMessage(t('channels.createdMsg', { name: created.name }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setCreating(false);
     }
@@ -476,7 +485,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
       const updated = await api.updateChannel(channel.id, { enabled: !channel.enabled });
       setChannels((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setBusyIds((prev) => ({ ...prev, [channel.id]: false }));
     }
@@ -496,7 +505,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
     setStatusMessage(null);
 
     if (!editName.trim()) {
-      setError('Channel name cannot be empty.');
+      setError(t('channels.nameEmptyError'));
       return;
     }
 
@@ -507,9 +516,9 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
     };
 
     if (editUpdateConfig) {
-      const { payload, validationError } = buildConfigPayload(channel.channelType, editFields);
+      const { payload, validationError } = buildConfigPayload(channel.channelType, editFields, t);
       if (validationError || !payload) {
-        setError(validationError ?? 'Invalid channel configuration.');
+        setError(validationError ?? t('channels.invalidConfig'));
         return;
       }
       cmd.config = payload;
@@ -520,9 +529,9 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
       const updated = await api.updateChannel(channel.id, cmd);
       setChannels((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
       setEditingId(null);
-      setStatusMessage(`Updated channel "${updated.name}".`);
+      setStatusMessage(t('channels.updatedMsg', { name: updated.name }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setSavingEdit(false);
     }
@@ -538,9 +547,9 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
       if (editingId === channel.id) {
         setEditingId(null);
       }
-      setStatusMessage(`Deleted channel "${channel.name}".`);
+      setStatusMessage(t('channels.deletedMsg', { name: channel.name }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setBusyIds((prev) => ({ ...prev, [channel.id]: false }));
     }
@@ -553,7 +562,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
       const result = await api.testChannel(channel.id);
       setTestResults((prev) => ({ ...prev, [channel.id]: result }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setBusyIds((prev) => ({ ...prev, [channel.id]: false }));
     }
@@ -584,16 +593,14 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
       {/* Add Notification Channel */}
       <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
         <div>
-          <h2 className="text-base font-semibold text-white">Add Notification Channel</h2>
-          <p className="mt-0.5 text-xs text-slate-400">
-            Supports SMTP Email, Telegram, Feishu, DingTalk, WeCom, and HMAC-signed Webhooks.
-          </p>
+          <h2 className="text-base font-semibold text-white">{t('channels.addTitle')}</h2>
+          <p className="mt-0.5 text-xs text-slate-400">{t('channels.addDesc')}</p>
         </div>
 
         <form onSubmit={(e) => void handleAddChannel(e)} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">Channel Type</span>
+              <span className="font-medium text-slate-200">{t('channels.channelType')}</span>
               <select
                 value={addType}
                 onChange={(e) => {
@@ -602,22 +609,22 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                 }}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
               >
-                {CHANNEL_TYPE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
+                {CHANNEL_TYPE_VALUES.map((val) => (
+                  <option key={val} value={val}>
+                    {labelChannelType(val)}
                   </option>
                 ))}
               </select>
             </label>
 
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">Channel Name</span>
+              <span className="font-medium text-slate-200">{t('channels.channelName')}</span>
               <input
                 type="text"
                 value={addName}
                 onChange={(e) => setAddName(e.target.value)}
                 required
-                placeholder="e.g. Primary Email / Ops Feishu"
+                placeholder={t('channels.channelNamePlaceholder')}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
               />
             </label>
@@ -639,7 +646,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                 onChange={(e) => setAddTriggerDaily(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
-              <span>Trigger on Daily Digest</span>
+              <span>{t('channels.triggerOnDaily')}</span>
             </label>
             <label className="inline-flex items-center gap-2">
               <input
@@ -648,7 +655,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                 onChange={(e) => setAddTriggerAlert(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
-              <span>Trigger on Urgent Alert</span>
+              <span>{t('channels.triggerOnAlert')}</span>
             </label>
           </div>
 
@@ -658,7 +665,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
             className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
           >
             <Plus className="h-4 w-4" />
-            {creating ? 'Creating...' : 'Add Channel'}
+            {creating ? t('channels.creatingBtn') : t('channels.addBtn')}
           </button>
         </form>
       </section>
@@ -666,13 +673,13 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
       {/* Configured Channels List */}
       <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
         <h2 className="text-base font-semibold text-white">
-          Notification Channels ({channels.length})
+          {t('channels.listTitle', { count: channels.length })}
         </h2>
 
         {loading ? (
-          <p className="py-4 text-sm text-slate-400">Loading channels...</p>
+          <p className="py-4 text-sm text-slate-400">{t('channels.loading')}</p>
         ) : channels.length === 0 ? (
-          <p className="py-4 text-sm text-slate-500">No notification channels configured yet.</p>
+          <p className="py-4 text-sm text-slate-500">{t('channels.empty')}</p>
         ) : (
           <div className="space-y-3">
             {channels.map((ch) => {
@@ -690,20 +697,22 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-semibold text-white">{ch.name}</span>
                         <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300">
-                          {ch.channelType}
+                          {labelChannelType(ch.channelType)}
                         </span>
                         {ch.triggerOnDaily && (
                           <span className="rounded border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[11px] text-indigo-300">
-                            Daily
+                            {t('channels.dailyTag')}
                           </span>
                         )}
                         {ch.triggerOnAlert && (
                           <span className="rounded border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[11px] text-amber-300">
-                            Alert
+                            {t('channels.alertTag')}
                           </span>
                         )}
                       </div>
-                      <div className="text-xs text-slate-400">Config hint: {ch.configHint}</div>
+                      <div className="text-xs text-slate-400">
+                        {t('channels.configHint', { hint: ch.configHint })}
+                      </div>
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2">
@@ -717,7 +726,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                             : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'
                         }`}
                       >
-                        {ch.enabled ? 'Enabled' : 'Disabled'}
+                        {ch.enabled ? t('common.enabled') : t('common.disabled')}
                       </button>
 
                       <button
@@ -727,7 +736,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
                       >
                         <Send className="h-3.5 w-3.5 text-cyan-400" />
-                        Test Send
+                        {t('channels.testSend')}
                       </button>
 
                       <button
@@ -737,7 +746,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
                       >
                         <Edit3 className="h-3.5 w-3.5" />
-                        {isEditing ? 'Cancel' : 'Edit'}
+                        {isEditing ? t('common.cancel') : t('common.edit')}
                       </button>
 
                       <button
@@ -747,7 +756,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                         className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                        Delete
+                        {t('common.delete')}
                       </button>
                     </div>
                   </div>
@@ -755,12 +764,14 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                   {isEditing && (
                     <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/70 p-4">
                       <div className="text-xs text-slate-400">
-                        Stored configuration hint:{' '}
+                        {t('channels.storedHint')}{' '}
                         <span className="font-mono text-slate-200">{ch.configHint}</span>
                       </div>
 
                       <label className="block space-y-1 text-xs">
-                        <span className="font-medium text-slate-200">Channel Name</span>
+                        <span className="font-medium text-slate-200">
+                          {t('channels.channelName')}
+                        </span>
                         <input
                           type="text"
                           value={editName}
@@ -777,7 +788,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                             onChange={(e) => setEditTriggerDaily(e.target.checked)}
                             className="h-4 w-4 rounded border-slate-600 bg-slate-900"
                           />
-                          <span>Trigger on Daily Digest</span>
+                          <span>{t('channels.triggerOnDaily')}</span>
                         </label>
                         <label className="inline-flex items-center gap-2">
                           <input
@@ -786,7 +797,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                             onChange={(e) => setEditTriggerAlert(e.target.checked)}
                             className="h-4 w-4 rounded border-slate-600 bg-slate-900"
                           />
-                          <span>Trigger on Urgent Alert</span>
+                          <span>{t('channels.triggerOnAlert')}</span>
                         </label>
                       </div>
 
@@ -797,7 +808,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                           onChange={(e) => setEditUpdateConfig(e.target.checked)}
                           className="h-4 w-4 rounded border-slate-600 bg-slate-900"
                         />
-                        <span>Update credentials / connection config (secrets not prefilled)</span>
+                        <span>{t('channels.updateConfig')}</span>
                       </label>
 
                       {editUpdateConfig && (
@@ -817,7 +828,7 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                           onClick={() => void handleSaveEdit(ch)}
                           className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
                         >
-                          {savingEdit ? 'Saving...' : 'Save Changes'}
+                          {savingEdit ? t('common.saving') : t('common.saveChanges')}
                         </button>
                       </div>
                     </div>
@@ -833,8 +844,11 @@ export function ChannelsPanel({ api }: ChannelsPanelProps) {
                       }`}
                     >
                       <div className="font-medium">
-                        Test Send: {testRes.status} ({testRes.channelType}) at{' '}
-                        {new Date(testRes.sentAt).toLocaleString()}
+                        {t('channels.testSendResult', {
+                          status: labelDeliveryStatus(testRes.status),
+                          channelType: testRes.channelType,
+                          time: formatDateTime(testRes.sentAt),
+                        })}
                       </div>
                       {testRes.errorMessage && (
                         <div className="mt-1 text-rose-300">{testRes.errorMessage}</div>

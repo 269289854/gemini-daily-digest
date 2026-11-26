@@ -26,12 +26,12 @@ use crate::constants::{
     SUBROUTE_AUTH_CONFIG, SUBROUTE_BOOKMARKS, SUBROUTE_BOOKMARK_BY_ITEM, SUBROUTE_DELIVERY_RESEND,
     SUBROUTE_DIGESTS, SUBROUTE_DIGEST_BY_DATE, SUBROUTE_DIGEST_MARKDOWN, SUBROUTE_EVENTS_STREAM,
     SUBROUTE_ITEMS, SUBROUTE_ME, SUBROUTE_RUNS, SUBROUTE_RUNS_STATS, SUBROUTE_RUNS_TRIGGER,
-    SUBROUTE_SETTINGS_AI, SUBROUTE_SETTINGS_AI_TEST, SUBROUTE_SETTINGS_CHANNELS,
-    SUBROUTE_SETTINGS_CHANNEL_BY_ID, SUBROUTE_SETTINGS_CHANNEL_TEST, SUBROUTE_SETTINGS_SCHEDULE,
-    SUBROUTE_SETTINGS_SOURCES, SUBROUTE_SETTINGS_SOURCES_EXPORT, SUBROUTE_SETTINGS_SOURCES_IMPORT,
-    SUBROUTE_SETTINGS_SOURCES_IMPORT_PRESET, SUBROUTE_SETTINGS_SOURCE_BY_ID,
-    SUBROUTE_SETTINGS_SOURCE_TEST, SUBROUTE_SETTINGS_WATCHLIST, SUBROUTE_SETTINGS_WATCHLIST_BY_ID,
-    SUBROUTE_SOURCE_DIGESTS, SUBROUTE_SOURCE_ITEMS,
+    SUBROUTE_SETTINGS_AI, SUBROUTE_SETTINGS_AI_MODELS, SUBROUTE_SETTINGS_AI_TEST,
+    SUBROUTE_SETTINGS_CHANNELS, SUBROUTE_SETTINGS_CHANNEL_BY_ID, SUBROUTE_SETTINGS_CHANNEL_TEST,
+    SUBROUTE_SETTINGS_SCHEDULE, SUBROUTE_SETTINGS_SOURCES, SUBROUTE_SETTINGS_SOURCES_EXPORT,
+    SUBROUTE_SETTINGS_SOURCES_IMPORT, SUBROUTE_SETTINGS_SOURCES_IMPORT_PRESET,
+    SUBROUTE_SETTINGS_SOURCE_BY_ID, SUBROUTE_SETTINGS_SOURCE_TEST, SUBROUTE_SETTINGS_WATCHLIST,
+    SUBROUTE_SETTINGS_WATCHLIST_BY_ID, SUBROUTE_SOURCE_DIGESTS, SUBROUTE_SOURCE_ITEMS,
 };
 use crate::state::AppState;
 
@@ -79,6 +79,7 @@ pub fn router(state: AppState) -> Router {
             get(settings::get_ai_config).put(settings::update_ai_config),
         )
         .route(SUBROUTE_SETTINGS_AI_TEST, post(settings::test_ai_config))
+        .route(SUBROUTE_SETTINGS_AI_MODELS, post(settings::list_ai_models))
         .route(
             SUBROUTE_SETTINGS_SOURCES,
             get(settings::list_sources).post(settings::create_source),
@@ -186,8 +187,8 @@ mod tests {
     use crate::constants::{CONTENT_TYPE_MARKDOWN_UTF8, DEV_BYPASS_OIDC_SUB};
     use crate::repo::*;
     use crate::services::{
-        AiTestRequest, AiTestResult, ChannelTestResult, ExecutionOrchestrator, SourceTestResult,
-        SseEnvelope, SsePublisher, TriggerRunRequest,
+        AiModelsRequest, AiModelsResult, AiTestRequest, AiTestResult, ChannelTestResult,
+        ExecutionOrchestrator, SourceTestResult, SseEnvelope, SsePublisher, TriggerRunRequest,
     };
 
     #[derive(Default)]
@@ -947,6 +948,30 @@ mod tests {
             })
         }
 
+        async fn list_ai_models(
+            &self,
+            _: Uuid,
+            req: AiModelsRequest,
+        ) -> Result<AiModelsResult, CoreError> {
+            let base = req
+                .base_url
+                .unwrap_or_else(|| "https://api.deepseek.com".to_owned());
+            Ok(AiModelsResult {
+                models: vec![
+                    digest_core::traits::AiModelOption {
+                        id: "deepseek-chat".to_owned(),
+                        owned_by: Some("deepseek".to_owned()),
+                    },
+                    digest_core::traits::AiModelOption {
+                        id: "deepseek-reasoner".to_owned(),
+                        owned_by: Some("deepseek".to_owned()),
+                    },
+                ],
+                endpoint_url: format!("{}/v1/models", base.trim_end_matches('/')),
+                latency_ms: 10,
+            })
+        }
+
         async fn test_source(
             &self,
             _: Uuid,
@@ -1153,6 +1178,30 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ai_test_ssrf.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let ai_models_ssrf = app
+            .clone()
+            .oneshot(loopback_req(
+                http::Method::POST,
+                "/api/v1/settings/ai/models",
+                Some(serde_json::json!({ "baseUrl": "http://169.254.169.254/v1" })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(ai_models_ssrf.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let ai_models_ok = app
+            .clone()
+            .oneshot(loopback_req(
+                http::Method::POST,
+                "/api/v1/settings/ai/models",
+                Some(serde_json::json!({ "baseUrl": "https://93.184.216.34/v1" })),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(ai_models_ok.status(), StatusCode::OK);
+        let models_json = read_json(ai_models_ok).await;
+        assert_eq!(models_json["models"][0]["id"], "deepseek-chat");
 
         // 4. Sources CRUD, preset import, export, import, test
         let preset_resp = app

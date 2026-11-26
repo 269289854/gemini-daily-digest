@@ -239,6 +239,8 @@ pub const DEFAULT_SUMMARY_RICHNESS_BONUS: i32 = 5;
 /// OpenAI-compatible LLM endpoint path, default prompt, and fallback label.
 pub const LLM_CHAT_COMPLETIONS_PATH: &str = "/v1/chat/completions";
 pub const LLM_CHAT_COMPLETIONS_SUFFIX: &str = "/chat/completions";
+pub const LLM_MODELS_PATH: &str = "/v1/models";
+pub const LLM_MODELS_SUFFIX: &str = "/models";
 pub const DEFAULT_LLM_SYSTEM_PROMPT: &str = "You are a precise technical intelligence analyst summarizing Gemini and AI ecosystem updates. Produce concise, factual summaries grounded strictly in the provided items.";
 pub const FALLBACK_MODEL_LABEL: &str = "deterministic-fallback";
 

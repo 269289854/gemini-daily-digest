@@ -14,6 +14,7 @@ pub const SUBROUTE_BOOKMARKS: &str = "/bookmarks";
 pub const SUBROUTE_BOOKMARK_BY_ITEM: &str = "/bookmarks/{item_id}";
 pub const SUBROUTE_SETTINGS_AI: &str = "/settings/ai";
 pub const SUBROUTE_SETTINGS_AI_TEST: &str = "/settings/ai/test";
+pub const SUBROUTE_SETTINGS_AI_MODELS: &str = "/settings/ai/models";
 pub const SUBROUTE_SETTINGS_SOURCES: &str = "/settings/sources";
 pub const SUBROUTE_SETTINGS_SOURCE_BY_ID: &str = "/settings/sources/{id}";
 pub const SUBROUTE_SETTINGS_SOURCES_IMPORT_PRESET: &str = "/settings/sources/import-preset";

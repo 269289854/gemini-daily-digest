@@ -104,6 +104,12 @@ export const ErrorCode = {
 } as const;
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 
+export const Locale = {
+  ZH_CN: 'zh-CN',
+  EN_US: 'en-US',
+} as const;
+export type Locale = (typeof Locale)[keyof typeof Locale];
+
 export const McpToolName = {
   DIGEST_GET_DAILY: 'digest_get_daily',
   DIGEST_LIST_DATES: 'digest_list_dates',

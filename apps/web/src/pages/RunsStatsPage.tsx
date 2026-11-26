@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { ApiError, type ApiClient } from '../api/client';
 import { DEFAULTS } from '../constants/routes';
+import { type TranslateFn, useI18n } from '../i18n';
 import type {
   DeliveryLogRecord,
   DigestRunView,
@@ -22,7 +23,7 @@ import type {
   RunStatsView,
   SourceHealthStat,
 } from '../types/api';
-import { DeliveryStatus, FetchOutcome, RunStatus, RunType, SourceScope } from '../types/enums';
+import { DeliveryStatus, FetchOutcome, RunStatus, SourceScope } from '../types/enums';
 
 export interface RunsStatsPageProps {
   api: ApiClient;
@@ -35,44 +36,16 @@ const TERMINAL_RUN_STATUSES: ReadonlySet<RunStatus> = new Set([
   RunStatus.FAILED,
 ]);
 
-function formatErrorMessage(err: unknown): string {
+function formatErrorMessage(err: unknown, t: TranslateFn): string {
   if (err instanceof ApiError) {
-    return err.requestId ? `${err.message} (Request ID: ${err.requestId})` : err.message;
+    return err.requestId
+      ? `${err.message} (${t('common.requestId', { id: err.requestId })})`
+      : err.message;
   }
   if (err instanceof Error) {
     return err.message;
   }
-  return 'Unexpected error loading run statistics';
-}
-
-function formatDateTime(iso: string | null): string {
-  if (!iso) {
-    return '—';
-  }
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return iso;
-  }
-  return date.toLocaleString();
-}
-
-function formatShortTime(iso: string): string {
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) {
-    return iso;
-  }
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatRunType(runType: RunType): string {
-  switch (runType) {
-    case RunType.SCHEDULED_DAILY:
-      return 'Scheduled Daily';
-    case RunType.MANUAL_DAILY:
-      return 'Manual Daily';
-    case RunType.ALERT_SCAN:
-      return 'Alert Scan';
-  }
+  return t('runs.loadErrorFallback');
 }
 
 function getRunStatusBadgeClass(status: RunStatus): string {
@@ -114,6 +87,21 @@ function getDeliveryStatusBadgeClass(status: DeliveryStatus): string {
 }
 
 export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
+  const {
+    t,
+    formatDateTime,
+    formatShortTime,
+    labelSourceType,
+    labelSourceScope,
+    labelChannelType,
+    labelRunType,
+    labelRunStatus,
+    labelDeliveryStatus,
+    labelFetchOutcome,
+  } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const [stats, setStats] = useState<RunStatsView | null>(null);
   const [runsPage, setRunsPage] = useState<PagedResult<DigestRunView> | null>(null);
   const [page, setPage] = useState<number>(1);
@@ -142,7 +130,7 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
         setStats(statsRes);
         setRunsPage(runsRes);
       } catch (err) {
-        setError(formatErrorMessage(err));
+        setError(formatErrorMessage(err, tRef.current));
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -196,15 +184,20 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
             ),
           };
         });
-        setActionMessage(`Delivery ${updated.id} status: ${updated.status}`);
+        setActionMessage(
+          t('runs.deliveryUpdated', {
+            id: updated.id,
+            status: labelDeliveryStatus(updated.status),
+          }),
+        );
         void loadData(page, true);
       } catch (err) {
-        setError(formatErrorMessage(err));
+        setError(formatErrorMessage(err, t));
       } finally {
         setResendingIds((prev) => ({ ...prev, [delivery.id]: false }));
       }
     },
-    [api, loadData, page],
+    [api, labelDeliveryStatus, loadData, page, t],
   );
 
   const toggleRunDeliveries = (runId: string) => {
@@ -220,7 +213,7 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
   const deliverySuccessRate =
     totalDeliveries > 0
       ? `${Math.round(((stats?.deliveriesSent ?? 0) / totalDeliveries) * 100)}%`
-      : 'N/A';
+      : t('runs.na');
 
   const runs = runsPage?.items ?? [];
 
@@ -243,10 +236,8 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
     <div className="space-y-6">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">Runs &amp; Statistics</h1>
-          <p className="mt-1 text-sm text-slate-400">
-            Execution telemetry, token consumption breakdown, source health, and delivery resend.
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight text-white">{t('runs.title')}</h1>
+          <p className="mt-1 text-sm text-slate-400">{t('runs.subtitle')}</p>
         </div>
         <button
           type="button"
@@ -255,7 +246,7 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
           className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3.5 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-          Refresh
+          {t('common.refresh')}
         </button>
       </header>
 
@@ -281,15 +272,15 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
 
       {loading && !stats ? (
         <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-8 text-center text-sm text-slate-400">
-          Loading run statistics...
+          {t('runs.loadingStats')}
         </div>
       ) : (
         <>
           {/* KPI Summary Cards */}
-          <section aria-label="Run KPI Summary" className="grid gap-4 sm:grid-cols-3">
+          <section aria-label={t('runs.kpiAria')} className="grid gap-4 sm:grid-cols-3">
             <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
               <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-400">
-                <span>Total Runs</span>
+                <span>{t('runs.totalRuns')}</span>
                 <Activity className="h-4 w-4 text-indigo-400" />
               </div>
               <div className="mt-2 text-3xl font-bold text-white">
@@ -297,15 +288,17 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
               </div>
               <div className="mt-2 flex items-center gap-3 text-xs text-slate-400">
                 <span className="text-emerald-300">
-                  {stats?.succeededRuns ?? 0} succeeded
+                  {t('runs.succeededCount', { count: stats?.succeededRuns ?? 0 })}
                 </span>
-                <span className="text-rose-300">{stats?.failedRuns ?? 0} failed</span>
+                <span className="text-rose-300">
+                  {t('runs.failedCount', { count: stats?.failedRuns ?? 0 })}
+                </span>
               </div>
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
               <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-400">
-                <span>Total Tokens</span>
+                <span>{t('runs.totalTokens')}</span>
                 <Sparkles className="h-4 w-4 text-cyan-400" />
               </div>
               <div className="mt-2 text-3xl font-bold text-white">
@@ -313,23 +306,31 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-slate-400">
                 <span className="text-indigo-300">
-                  {(stats?.totalPromptTokens ?? 0).toLocaleString()} prompt
+                  {t('runs.promptTokensInline', {
+                    count: (stats?.totalPromptTokens ?? 0).toLocaleString(),
+                  })}
                 </span>
                 <span className="text-cyan-300">
-                  {(stats?.totalCompletionTokens ?? 0).toLocaleString()} completion
+                  {t('runs.completionTokensInline', {
+                    count: (stats?.totalCompletionTokens ?? 0).toLocaleString(),
+                  })}
                 </span>
               </div>
             </div>
 
             <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
               <div className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-slate-400">
-                <span>Delivery Success Rate</span>
+                <span>{t('runs.deliverySuccessRate')}</span>
                 <Send className="h-4 w-4 text-emerald-400" />
               </div>
               <div className="mt-2 text-3xl font-bold text-white">{deliverySuccessRate}</div>
               <div className="mt-2 flex items-center gap-3 text-xs text-slate-400">
-                <span className="text-emerald-300">{stats?.deliveriesSent ?? 0} sent</span>
-                <span className="text-rose-300">{stats?.deliveriesFailed ?? 0} failed</span>
+                <span className="text-emerald-300">
+                  {t('runs.sentCount', { count: stats?.deliveriesSent ?? 0 })}
+                </span>
+                <span className="text-rose-300">
+                  {t('runs.failedCount', { count: stats?.deliveriesFailed ?? 0 })}
+                </span>
               </div>
             </div>
           </section>
@@ -338,19 +339,19 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
           <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="text-base font-semibold text-white">Token Consumption</h2>
-                <p className="text-xs text-slate-400">
-                  Overall prompt vs completion share and per-run token breakdown.
-                </p>
+                <h2 className="text-base font-semibold text-white">
+                  {t('runs.tokenConsumption')}
+                </h2>
+                <p className="text-xs text-slate-400">{t('runs.tokenSubtitle')}</p>
               </div>
               <div className="flex items-center gap-4 text-xs text-slate-300">
                 <span className="inline-flex items-center gap-1.5">
                   <span className="h-2.5 w-2.5 rounded-sm bg-indigo-500" />
-                  Prompt Tokens
+                  {t('runs.promptTokens')}
                 </span>
                 <span className="inline-flex items-center gap-1.5">
                   <span className="h-2.5 w-2.5 rounded-sm bg-cyan-400" />
-                  Completion Tokens
+                  {t('runs.completionTokens')}
                 </span>
               </div>
             </div>
@@ -359,17 +360,25 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
             <div>
               <div className="mb-1.5 flex justify-between text-xs text-slate-300">
                 <span>
-                  Prompt: {(stats?.totalPromptTokens ?? 0).toLocaleString()} ({promptSharePct}%)
+                  {t('runs.promptShare', {
+                    count: (stats?.totalPromptTokens ?? 0).toLocaleString(),
+                    pct: promptSharePct,
+                  })}
                 </span>
                 <span>
-                  Completion: {(stats?.totalCompletionTokens ?? 0).toLocaleString()} (
-                  {completionSharePct}%)
+                  {t('runs.completionShare', {
+                    count: (stats?.totalCompletionTokens ?? 0).toLocaleString(),
+                    pct: completionSharePct,
+                  })}
                 </span>
               </div>
               <div
                 className="flex h-3 w-full overflow-hidden rounded-full bg-slate-800"
                 role="img"
-                aria-label={`Token share: ${promptSharePct}% prompt, ${completionSharePct}% completion`}
+                aria-label={t('runs.tokenShareAria', {
+                  promptPct: promptSharePct,
+                  completionPct: completionSharePct,
+                })}
               >
                 {totalTokens > 0 && (
                   <>
@@ -388,14 +397,12 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
 
             {/* Stacked Per-Run SVG Chart */}
             {chartRuns.length === 0 ? (
-              <p className="py-4 text-center text-xs text-slate-500">
-                No execution runs recorded yet to display token consumption bars.
-              </p>
+              <p className="py-4 text-center text-xs text-slate-500">{t('runs.noChartRuns')}</p>
             ) : (
               <div className="overflow-x-auto">
                 <svg
                   role="img"
-                  aria-label="Stacked prompt and completion tokens per recent run"
+                  aria-label={t('runs.chartAria')}
                   viewBox={`0 0 ${svgWidth} ${svgHeight}`}
                   className="h-44 w-full min-w-[320px]"
                 >
@@ -416,7 +423,7 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
                     return (
                       <g key={run.id}>
                         <title>
-                          {`${formatRunType(run.runType)} (${formatDateTime(run.startedAt)}) — Prompt: ${promptVal.toLocaleString()}, Completion: ${completionVal.toLocaleString()}`}
+                          {`${labelRunType(run.runType)} (${formatDateTime(run.startedAt)}) — ${t('runs.promptTokens')}: ${promptVal.toLocaleString()}, ${t('runs.completionTokens')}: ${completionVal.toLocaleString()}`}
                         </title>
                         <rect
                           x={x}
@@ -465,53 +472,57 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
 
           {/* Source Health Table */}
           <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
-            <h2 className="text-base font-semibold text-white">Source Health</h2>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Latest fetch outcomes and consecutive failure tracking for subscribed sources.
-            </p>
+            <h2 className="text-base font-semibold text-white">{t('runs.sourceHealth')}</h2>
+            <p className="mt-0.5 text-xs text-slate-400">{t('runs.sourceHealthSubtitle')}</p>
             <div className="mt-4 overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-800 text-left text-xs">
                 <thead>
                   <tr className="text-slate-400">
-                    <th className="py-2 pr-4 font-medium">Source</th>
-                    <th className="py-2 pr-4 font-medium">Type</th>
-                    <th className="py-2 pr-4 font-medium">Scope</th>
-                    <th className="py-2 pr-4 font-medium">Enabled</th>
-                    <th className="py-2 pr-4 font-medium">Last Status</th>
-                    <th className="py-2 pr-4 font-medium">Failures</th>
-                    <th className="py-2 pr-4 font-medium">Last Fetched</th>
-                    <th className="py-2 font-medium">Last Error</th>
+                    <th className="py-2 pr-4 font-medium">{t('runs.colSource')}</th>
+                    <th className="py-2 pr-4 font-medium">{t('runs.colType')}</th>
+                    <th className="py-2 pr-4 font-medium">{t('runs.colScope')}</th>
+                    <th className="py-2 pr-4 font-medium">{t('runs.colEnabled')}</th>
+                    <th className="py-2 pr-4 font-medium">{t('runs.colLastStatus')}</th>
+                    <th className="py-2 pr-4 font-medium">{t('runs.colFailures')}</th>
+                    <th className="py-2 pr-4 font-medium">{t('runs.colLastFetched')}</th>
+                    <th className="py-2 font-medium">{t('runs.colLastError')}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/70 text-slate-200">
                   {!stats || stats.sourceHealth.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="py-6 text-center text-slate-500">
-                        No sources subscribed yet.
+                        {t('runs.noSources')}
                       </td>
                     </tr>
                   ) : (
                     stats.sourceHealth.map((src: SourceHealthStat) => (
                       <tr key={src.sourceId}>
                         <td className="py-2.5 pr-4 font-medium text-white">{src.sourceName}</td>
-                        <td className="py-2.5 pr-4 font-mono text-slate-300">{src.sourceType}</td>
+                        <td className="py-2.5 pr-4 font-mono text-slate-300">
+                          {labelSourceType(src.sourceType)}
+                        </td>
                         <td className="py-2.5 pr-4">
                           <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 text-[11px] text-slate-300">
-                            {src.scope === SourceScope.SHARED_PUBLIC ? 'shared_public' : 'user_private'}
+                            {labelSourceScope(
+                              src.scope === SourceScope.SHARED_PUBLIC
+                                ? SourceScope.SHARED_PUBLIC
+                                : SourceScope.USER_PRIVATE,
+                            )}
                           </span>
                         </td>
                         <td className="py-2.5 pr-4">
                           {src.enabled ? (
-                            <span className="text-emerald-300">Enabled</span>
+                            <span className="text-emerald-300">{t('common.enabled')}</span>
                           ) : (
-                            <span className="text-slate-500">Paused</span>
+                            <span className="text-slate-500">{t('common.paused')}</span>
                           )}
                         </td>
                         <td className="py-2.5 pr-4">
                           <span
                             className={`inline-block rounded-full border px-2 py-0.5 text-[11px] font-medium ${getFetchOutcomeBadgeClass(src.lastStatus)}`}
                           >
-                            {src.lastStatus ?? 'pending'}
+                            {labelFetchOutcome(src.lastStatus, 'pending')}
                           </span>
                         </td>
                         <td className="py-2.5 pr-4">
@@ -526,7 +537,7 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
                           </span>
                         </td>
                         <td className="py-2.5 pr-4 text-slate-400">
-                          {formatDateTime(src.lastFetchedAt)}
+                          {src.lastFetchedAt ? formatDateTime(src.lastFetchedAt) : '—'}
                         </td>
                         <td className="max-w-xs truncate py-2.5 text-rose-300" title={src.lastError ?? ''}>
                           {src.lastError ?? '—'}
@@ -543,14 +554,16 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
           <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
-                <h2 className="text-base font-semibold text-white">Run History</h2>
-                <p className="mt-0.5 text-xs text-slate-400">
-                  Execution runs with token usage and per-channel notification delivery logs.
-                </p>
+                <h2 className="text-base font-semibold text-white">{t('runs.runHistory')}</h2>
+                <p className="mt-0.5 text-xs text-slate-400">{t('runs.runHistorySubtitle')}</p>
               </div>
               {runsPage && (
                 <div className="text-xs text-slate-400">
-                  Page {runsPage.page} of {Math.max(1, runsPage.totalPages)} ({runsPage.total} runs)
+                  {t('runs.runsPagination', {
+                    page: runsPage.page,
+                    totalPages: Math.max(1, runsPage.totalPages),
+                    total: runsPage.total,
+                  })}
                 </div>
               )}
             </div>
@@ -558,7 +571,7 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
             <div className="mt-4 space-y-3">
               {runs.length === 0 ? (
                 <div className="rounded-lg border border-slate-800 bg-slate-950/40 p-6 text-center text-xs text-slate-500">
-                  No runs found.
+                  {t('runs.noRuns')}
                 </div>
               ) : (
                 runs.map((run) => {
@@ -573,30 +586,34 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
                           <span
                             className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${getRunStatusBadgeClass(run.status)}`}
                           >
-                            {run.status}
+                            {labelRunStatus(run.status)}
                           </span>
                           <span className="text-sm font-semibold text-white">
-                            {formatRunType(run.runType)}
+                            {labelRunType(run.runType)}
                           </span>
                           <span className="inline-flex items-center gap-1 text-xs text-slate-400">
                             <Clock className="h-3.5 w-3.5" />
-                            Started: {formatDateTime(run.startedAt)}
+                            {t('runs.started', { time: formatDateTime(run.startedAt) || '—' })}
                           </span>
                           {run.finishedAt && (
                             <span className="text-xs text-slate-500">
-                              Finished: {formatDateTime(run.finishedAt)}
+                              {t('runs.finished', { time: formatDateTime(run.finishedAt) || '—' })}
                             </span>
                           )}
                         </div>
 
                         <div className="flex flex-wrap items-center gap-4 text-xs text-slate-300">
                           <span>
-                            Items: <strong>{run.itemsFetched}</strong> fetched /{' '}
-                            <strong>{run.itemsNew}</strong> new
+                            {t('runs.itemsSummary', {
+                              fetched: run.itemsFetched,
+                              newCount: run.itemsNew,
+                            })}
                           </span>
                           <span>
-                            Tokens: <strong>{run.promptTokens.toLocaleString()}</strong> prompt /{' '}
-                            <strong>{run.completionTokens.toLocaleString()}</strong> completion
+                            {t('runs.tokensSummary', {
+                              prompt: run.promptTokens.toLocaleString(),
+                              completion: run.completionTokens.toLocaleString(),
+                            })}
                           </span>
                         </div>
                       </div>
@@ -620,7 +637,7 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
                             ) : (
                               <ChevronDown className="h-3.5 w-3.5" />
                             )}
-                            Deliveries ({run.deliveries.length})
+                            {t('runs.deliveriesCount', { count: run.deliveries.length })}
                           </button>
 
                           {!isCollapsed && (
@@ -636,15 +653,15 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
                                   >
                                     <div className="flex flex-wrap items-center gap-2.5">
                                       <span className="font-mono font-medium text-slate-200">
-                                        {delivery.channelType}
+                                        {labelChannelType(delivery.channelType)}
                                       </span>
                                       <span
                                         className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${getDeliveryStatusBadgeClass(delivery.status)}`}
                                       >
-                                        {delivery.status}
+                                        {labelDeliveryStatus(delivery.status)}
                                       </span>
                                       <span className="text-slate-400">
-                                        {formatDateTime(delivery.sentAt)}
+                                        {formatDateTime(delivery.sentAt) || '—'}
                                       </span>
                                       {delivery.errorMessage && (
                                         <span className="text-rose-300">
@@ -659,13 +676,13 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
                                       onClick={() => void handleResend(delivery)}
                                       title={
                                         canResend
-                                          ? 'Resend this notification delivery'
-                                          : 'Resend unavailable (digest or channel no longer linked)'
+                                          ? t('runs.resendTitle')
+                                          : t('runs.resendUnavailableTitle')
                                       }
                                       className="inline-flex items-center gap-1.5 rounded border border-indigo-500/40 bg-indigo-500/10 px-2.5 py-1 text-xs font-medium text-indigo-200 transition hover:bg-indigo-500/20 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800/60 disabled:text-slate-500"
                                     >
                                       <RotateCcw className="h-3 w-3" />
-                                      {isResending ? 'Resending...' : 'Resend'}
+                                      {isResending ? t('runs.resending') : t('runs.resend')}
                                     </button>
                                   </div>
                                 );
@@ -688,7 +705,7 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Previous
+                  {t('common.previous')}
                 </button>
                 <button
                   type="button"
@@ -696,7 +713,7 @@ export function RunsStatsPage({ api, latestRunProgress }: RunsStatsPageProps) {
                   onClick={() => setPage((p) => p + 1)}
                   className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  Next
+                  {t('common.next')}
                 </button>
               </div>
             )}

@@ -237,6 +237,23 @@ export interface AiTestResult {
   message: string;
 }
 
+export interface AiModelOption {
+  id: string;
+  ownedBy?: string | null;
+}
+
+export interface AiModelsRequest {
+  baseUrl?: string | null;
+  apiKey?: string | null;
+  clearApiKey?: boolean;
+}
+
+export interface AiModelsResult {
+  models: AiModelOption[];
+  endpointUrl: string;
+  latencyMs: number;
+}
+
 // ============================================================================
 // Settings: Sources, Presets & Export/Import
 // ============================================================================

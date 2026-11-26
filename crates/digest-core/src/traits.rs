@@ -114,6 +114,15 @@ pub struct SummarizedDigest {
     pub degraded_fallback: bool,
 }
 
+/// Single model descriptor returned by an OpenAI-compatible `/models` endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiModelOption {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owned_by: Option<String>,
+}
+
 /// Strategy trait implemented by LLM providers and deterministic fallbacks.
 #[async_trait]
 pub trait LlmProvider: Send + Sync {
@@ -145,6 +154,11 @@ pub trait StructuredLlmProvider: LlmProvider {
 
     /// Verifies connectivity and credentials against the configured AI endpoint.
     async fn test_connection(&self, config: &UserAiConfig) -> Result<(), CoreError>;
+
+    /// Lists available model identifiers from the configured AI endpoint.
+    async fn list_models(&self, _config: &UserAiConfig) -> Result<Vec<AiModelOption>, CoreError> {
+        Ok(Vec::new())
+    }
 }
 
 /// Rendered digest payload ready for email or IM delivery.

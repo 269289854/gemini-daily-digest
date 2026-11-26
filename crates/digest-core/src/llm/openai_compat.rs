@@ -1,13 +1,17 @@
 //! OpenAI-compatible HTTP LLM provider (`DeepSeek` default) with SSRF checks,
 //! clean `/v1/chat/completions` normalization, capped reads, and token accounting.
 
+use std::collections::BTreeMap;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use url::Url;
 
 use crate::config::{AppConfig, LlmTuning};
 use crate::constants::{
-    CONTENT_TYPE_JSON, DEFAULT_MAX_FEED_BYTES, HEADER_AUTHORIZATION, HEADER_BEARER_PREFIX,
-    HEADER_CONTENT_TYPE, LLM_CHAT_COMPLETIONS_PATH, LLM_CHAT_COMPLETIONS_SUFFIX,
+    CONTENT_TYPE_JSON, DEFAULT_MAX_FEED_BYTES, HEADER_ACCEPT, HEADER_AUTHORIZATION,
+    HEADER_BEARER_PREFIX, HEADER_CONTENT_TYPE, LLM_CHAT_COMPLETIONS_PATH,
+    LLM_CHAT_COMPLETIONS_SUFFIX, LLM_MODELS_PATH, LLM_MODELS_SUFFIX,
 };
 use crate::domain::{
     DailyDigestSynthesisInput, ProcessedItem, SourceDigestInput, SourceSummaryResult, UserAiConfig,
@@ -16,7 +20,9 @@ use crate::error::CoreError;
 use crate::http::{read_response_bytes_capped, shared_http_client};
 use crate::llm::fingerprint::compute_source_input_fingerprint;
 use crate::ssrf::SsrfGuard;
-use crate::traits::{LlmProvider, RawCollectedItem, StructuredLlmProvider, SummarizedDigest};
+use crate::traits::{
+    AiModelOption, LlmProvider, RawCollectedItem, StructuredLlmProvider, SummarizedDigest,
+};
 
 const MAX_PROMPT_SUMMARY_CHARS: usize = 400;
 const MAX_ERROR_BODY_CHARS: usize = 320;
@@ -97,6 +103,34 @@ impl OpenAiCompatProvider {
 
         let base_without_v1 = trimmed.strip_suffix("/v1").unwrap_or(trimmed);
         Ok(format!("{base_without_v1}{LLM_CHAT_COMPLETIONS_PATH}"))
+    }
+
+    /// Normalizes a provider `base_url` to its `/models` discovery endpoint.
+    pub fn build_models_url(base_url: &str) -> Result<String, CoreError> {
+        let trimmed = base_url.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            return Err(CoreError::InvalidConfig(
+                "AI base_url cannot be empty".to_owned(),
+            ));
+        }
+
+        if trimmed.ends_with(LLM_MODELS_SUFFIX) {
+            return Ok(trimmed.to_owned());
+        }
+
+        let normalized = trimmed
+            .strip_suffix(LLM_CHAT_COMPLETIONS_SUFFIX)
+            .unwrap_or(trimmed)
+            .trim_end_matches('/');
+
+        let parsed = Url::parse(normalized)
+            .map_err(|err| CoreError::InvalidConfig(format!("invalid AI base_url: {err}")))?;
+
+        if parsed.path().trim_matches('/').is_empty() {
+            Ok(format!("{normalized}{LLM_MODELS_PATH}"))
+        } else {
+            Ok(format!("{normalized}{LLM_MODELS_SUFFIX}"))
+        }
     }
 
     async fn call_chat_completion(
@@ -417,6 +451,43 @@ impl StructuredLlmProvider for OpenAiCompatProvider {
             .await?;
         Ok(())
     }
+
+    async fn list_models(&self, config: &UserAiConfig) -> Result<Vec<AiModelOption>, CoreError> {
+        let endpoint_url = Self::build_models_url(&config.base_url)?;
+        let validated_url = self.ssrf_guard.validate_url(&endpoint_url).await?;
+
+        let mut request = self
+            .http_client
+            .get(validated_url)
+            .header(HEADER_ACCEPT, CONTENT_TYPE_JSON)
+            .timeout(self.tuning.request_timeout);
+
+        if let Some(api_key) = config
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            request = request.header(
+                HEADER_AUTHORIZATION,
+                format!("{HEADER_BEARER_PREFIX}{api_key}"),
+            );
+        }
+
+        let response = request.send().await.map_err(map_reqwest_error)?;
+        let status = response.status();
+        let body = read_response_bytes_capped(response, self.max_response_bytes).await?;
+        if !status.is_success() {
+            let preview = truncate_chars(&String::from_utf8_lossy(&body), MAX_ERROR_BODY_CHARS);
+            return Err(CoreError::Upstream(format!(
+                "LLM models endpoint returned HTTP {}: {}",
+                status.as_u16(),
+                preview
+            )));
+        }
+
+        parse_models_response(&body)
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -561,5 +632,182 @@ fn map_reqwest_error(err: reqwest::Error) -> CoreError {
         CoreError::UpstreamTimeout(format!("LLM request timed out: {err}"))
     } else {
         CoreError::Upstream(format!("LLM request failed: {err}"))
+    }
+}
+
+fn parse_models_response(body: &[u8]) -> Result<Vec<AiModelOption>, CoreError> {
+    let parsed: serde_json::Value = serde_json::from_slice(body).map_err(|err| {
+        CoreError::Upstream(format!("failed to parse LLM models JSON response: {err}"))
+    })?;
+
+    let items = parsed
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .or_else(|| parsed.get("models").and_then(serde_json::Value::as_array))
+        .or_else(|| parsed.as_array())
+        .ok_or_else(|| {
+            CoreError::Upstream("LLM models response did not contain a model list".to_owned())
+        })?;
+
+    let mut deduped: BTreeMap<String, AiModelOption> = BTreeMap::new();
+    for entry in items {
+        if let Some(raw_id) = entry.as_str() {
+            let id = raw_id.trim();
+            if !id.is_empty() {
+                deduped.entry(id.to_owned()).or_insert(AiModelOption {
+                    id: id.to_owned(),
+                    owned_by: None,
+                });
+            }
+            continue;
+        }
+
+        let Some(obj) = entry.as_object() else {
+            continue;
+        };
+
+        let id = obj
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .or_else(|| {
+                obj.get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .map(|name| name.strip_prefix("models/").unwrap_or(name))
+            })
+            .filter(|id| !id.is_empty());
+
+        let Some(id) = id else {
+            continue;
+        };
+
+        let owned_by = obj
+            .get("owned_by")
+            .or_else(|| obj.get("ownedBy"))
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|owner| !owner.is_empty())
+            .map(str::to_owned);
+
+        deduped
+            .entry(id.to_owned())
+            .and_modify(|existing| {
+                if existing.owned_by.is_none() && owned_by.is_some() {
+                    existing.owned_by = owned_by.clone();
+                }
+            })
+            .or_insert(AiModelOption {
+                id: id.to_owned(),
+                owned_by,
+            });
+    }
+
+    Ok(deduped.into_values().collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_models_url_handles_bare_hosts_versioned_paths_and_suffixes() {
+        assert_eq!(
+            OpenAiCompatProvider::build_models_url("https://api.deepseek.com").unwrap(),
+            "https://api.deepseek.com/v1/models"
+        );
+        assert_eq!(
+            OpenAiCompatProvider::build_models_url("https://api.openai.com/v1/").unwrap(),
+            "https://api.openai.com/v1/models"
+        );
+        assert_eq!(
+            OpenAiCompatProvider::build_models_url(
+                "https://generativelanguage.googleapis.com/v1beta/openai"
+            )
+            .unwrap(),
+            "https://generativelanguage.googleapis.com/v1beta/openai/models"
+        );
+        assert_eq!(
+            OpenAiCompatProvider::build_models_url("https://ark.cn-beijing.volces.com/api/v3")
+                .unwrap(),
+            "https://ark.cn-beijing.volces.com/api/v3/models"
+        );
+        assert_eq!(
+            OpenAiCompatProvider::build_models_url("https://api.deepseek.com/v1/chat/completions")
+                .unwrap(),
+            "https://api.deepseek.com/v1/models"
+        );
+        assert_eq!(
+            OpenAiCompatProvider::build_models_url("https://api.deepseek.com/v1/models").unwrap(),
+            "https://api.deepseek.com/v1/models"
+        );
+        assert!(matches!(
+            OpenAiCompatProvider::build_models_url("   "),
+            Err(CoreError::InvalidConfig(_))
+        ));
+    }
+
+    #[test]
+    fn parse_models_response_supports_openai_gemini_and_array_formats() {
+        let openai_json = br#"{
+            "object": "list",
+            "data": [
+                { "id": "deepseek-reasoner", "owned_by": "deepseek" },
+                { "id": "deepseek-chat", "owned_by": "deepseek" },
+                { "id": "deepseek-chat", "owned_by": "duplicate" },
+                { "id": "  " }
+            ]
+        }"#;
+        let parsed_openai = parse_models_response(openai_json).unwrap();
+        assert_eq!(
+            parsed_openai,
+            vec![
+                AiModelOption {
+                    id: "deepseek-chat".to_owned(),
+                    owned_by: Some("deepseek".to_owned()),
+                },
+                AiModelOption {
+                    id: "deepseek-reasoner".to_owned(),
+                    owned_by: Some("deepseek".to_owned()),
+                },
+            ]
+        );
+
+        let gemini_json = br#"{
+            "models": [
+                { "name": "models/gemini-2.5-pro" },
+                { "id": "openai/gpt-4o", "ownedBy": "openrouter" }
+            ]
+        }"#;
+        let parsed_gemini = parse_models_response(gemini_json).unwrap();
+        assert_eq!(
+            parsed_gemini,
+            vec![
+                AiModelOption {
+                    id: "gemini-2.5-pro".to_owned(),
+                    owned_by: None,
+                },
+                AiModelOption {
+                    id: "openai/gpt-4o".to_owned(),
+                    owned_by: Some("openrouter".to_owned()),
+                },
+            ]
+        );
+
+        let array_json = br#"["gpt-4o-mini", { "id": "claude-3-7-sonnet" }]"#;
+        let parsed_array = parse_models_response(array_json).unwrap();
+        assert_eq!(
+            parsed_array,
+            vec![
+                AiModelOption {
+                    id: "claude-3-7-sonnet".to_owned(),
+                    owned_by: None,
+                },
+                AiModelOption {
+                    id: "gpt-4o-mini".to_owned(),
+                    owned_by: None,
+                },
+            ]
+        );
     }
 }

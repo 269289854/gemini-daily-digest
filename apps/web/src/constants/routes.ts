@@ -19,6 +19,7 @@ export const API_ROUTES = {
   bookmarkByItem: (itemId: string) => `${API_PREFIX}/bookmarks/${encodeURIComponent(itemId)}`,
   SETTINGS_AI: `${API_PREFIX}/settings/ai`,
   SETTINGS_AI_TEST: `${API_PREFIX}/settings/ai/test`,
+  SETTINGS_AI_MODELS: `${API_PREFIX}/settings/ai/models`,
   SETTINGS_SOURCES: `${API_PREFIX}/settings/sources`,
   sourceById: (sourceId: string) => `${API_PREFIX}/settings/sources/${encodeURIComponent(sourceId)}`,
   SETTINGS_SOURCES_IMPORT_PRESET: `${API_PREFIX}/settings/sources/import-preset`,
@@ -59,6 +60,7 @@ export const STORAGE_KEYS = {
   MCP_ACCESS_MODE: 'gemini_digest.mcp_access_mode',
   MCP_PORT: 'gemini_digest.mcp_port',
   ACTIVE_DIGEST_DATE: 'gemini_digest.active_digest_date',
+  LOCALE: 'gemini_digest.locale',
 } as const;
 
 export const TAURI_COMMANDS = {

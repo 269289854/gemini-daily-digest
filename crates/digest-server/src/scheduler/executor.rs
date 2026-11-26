@@ -40,8 +40,8 @@ use crate::scheduler::poller::{
     decode_source_payload_blocking, poll_canonical_source_once, SourcePollOutcome,
 };
 use crate::services::{
-    AiTestRequest, AiTestResult, ChannelTestResult, ExecutionOrchestrator, SourceTestResult,
-    TriggerRunRequest,
+    AiModelsRequest, AiModelsResult, AiTestRequest, AiTestResult, ChannelTestResult,
+    ExecutionOrchestrator, SourceTestResult, TriggerRunRequest,
 };
 use crate::sse_hub::run_progress_envelope;
 
@@ -351,6 +351,102 @@ impl ExecutionOrchestrator for ServerExecutionOrchestrator {
                     latency_ms,
                     message: sanitized,
                 })
+            }
+        }
+    }
+
+    async fn list_ai_models(
+        &self,
+        user_id: Uuid,
+        req: AiModelsRequest,
+    ) -> Result<AiModelsResult, CoreError> {
+        let stored = self.deps.repos.settings.get_ai_config(user_id).await?;
+        let base_cfg = resolve_user_ai_config_blocking(
+            Arc::clone(&self.deps.cipher),
+            stored,
+            self.deps.config.core.llm.default_max_tokens,
+        )
+        .await;
+
+        let api_key = if req.clear_api_key {
+            None
+        } else if let Some(override_key) = req
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            Some(override_key.to_owned())
+        } else {
+            base_cfg.api_key
+        };
+
+        let base_url = req
+            .base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| {
+                if base_cfg.base_url.is_empty() {
+                    DEFAULT_AI_BASE_URL.to_owned()
+                } else {
+                    base_cfg.base_url
+                }
+            });
+
+        let ai_cfg = UserAiConfig {
+            provider_label: if base_cfg.provider_label.is_empty() {
+                DEFAULT_AI_PROVIDER_LABEL.to_owned()
+            } else {
+                base_cfg.provider_label
+            },
+            base_url,
+            api_key,
+            model: if base_cfg.model.is_empty() {
+                DEFAULT_AI_MODEL.to_owned()
+            } else {
+                base_cfg.model
+            },
+            system_prompt: if base_cfg.system_prompt.is_empty() {
+                DEFAULT_LLM_SYSTEM_PROMPT.to_owned()
+            } else {
+                base_cfg.system_prompt
+            },
+            temperature: if base_cfg.temperature >= 0.0 {
+                base_cfg.temperature
+            } else {
+                DEFAULT_LLM_TEMPERATURE
+            },
+            max_tokens: if base_cfg.max_tokens > 0 {
+                base_cfg.max_tokens
+            } else {
+                DEFAULT_LLM_MAX_TOKENS
+            },
+        };
+
+        let endpoint_url = OpenAiCompatProvider::build_models_url(&ai_cfg.base_url)?;
+        self.ssrf.validate_url(&endpoint_url).await?;
+
+        let started = Instant::now();
+        let list_res = self.llm_provider.list_models(&ai_cfg).await;
+        let latency_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+
+        match list_res {
+            Ok(models) => Ok(AiModelsResult {
+                models,
+                endpoint_url,
+                latency_ms,
+            }),
+            Err(err @ CoreError::SsrfBlocked(_)) => Err(err),
+            Err(err) => {
+                let sanitized =
+                    sanitize_secret_from_msg(&err.to_string(), ai_cfg.api_key.as_deref());
+                match err {
+                    CoreError::UpstreamTimeout(_) => Err(CoreError::UpstreamTimeout(sanitized)),
+                    CoreError::InvalidConfig(_) => Err(CoreError::InvalidConfig(sanitized)),
+                    _ => Err(CoreError::Upstream(sanitized)),
+                }
             }
         }
     }
@@ -783,6 +879,96 @@ mod tests {
                 AiTestRequest {
                     base_url: Some("http://169.254.169.254/v1".to_owned()),
                     ..AiTestRequest::default()
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(ssrf_err, CoreError::SsrfBlocked(_)));
+    }
+
+    #[tokio::test]
+    async fn list_ai_models_validates_ssrf_uses_draft_and_stored_keys_and_redacts_secrets() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", "Bearer stored-models-secret-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "object": "list",
+                "data": [
+                    { "id": "deepseek-reasoner", "owned_by": "deepseek" },
+                    { "id": "deepseek-chat", "owned_by": "deepseek" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+
+        let mock = MockRepos::new();
+        let orch = build_orchestrator(&mock, true);
+        let user_id = Uuid::new_v4();
+
+        let enc = orch
+            .deps
+            .cipher
+            .encrypt("stored-models-secret-key")
+            .unwrap();
+        orch.deps
+            .repos
+            .settings
+            .upsert_ai_config(
+                user_id,
+                UpsertAiConfigRecord {
+                    provider_label: "DeepSeek".to_owned(),
+                    base_url: server.uri(),
+                    api_key_enc: Some(enc),
+                    api_key_hint: Some("stor****-key".to_owned()),
+                    model: "deepseek-chat".to_owned(),
+                    system_prompt: "Test".to_owned(),
+                    temperature: 0.2,
+                    max_tokens: 1024,
+                },
+            )
+            .await
+            .unwrap();
+
+        let stored_res = orch
+            .list_ai_models(user_id, AiModelsRequest::default())
+            .await
+            .unwrap();
+        assert_eq!(stored_res.models.len(), 2);
+        assert_eq!(stored_res.models[0].id, "deepseek-chat");
+        assert_eq!(stored_res.models[1].id, "deepseek-reasoner");
+
+        // Error response echoes draft key -> must be sanitized before returning.
+        Mock::given(method("GET"))
+            .and(path("/custom/v1/models"))
+            .respond_with(
+                ResponseTemplate::new(401).set_body_string("bad key: draft-secret-override-key"),
+            )
+            .mount(&server)
+            .await;
+
+        let err = orch
+            .list_ai_models(
+                user_id,
+                AiModelsRequest {
+                    base_url: Some(format!("{}/custom/v1", server.uri())),
+                    api_key: Some("draft-secret-override-key".to_owned()),
+                    clear_api_key: false,
+                },
+            )
+            .await
+            .unwrap_err();
+        let err_text = err.to_string();
+        assert!(!err_text.contains("draft-secret-override-key"));
+
+        // SSRF check blocks internal addresses.
+        let strict_orch = build_orchestrator(&mock, false);
+        let ssrf_err = strict_orch
+            .list_ai_models(
+                user_id,
+                AiModelsRequest {
+                    base_url: Some("http://169.254.169.254/v1".to_owned()),
+                    ..AiModelsRequest::default()
                 },
             )
             .await

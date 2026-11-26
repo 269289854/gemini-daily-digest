@@ -1,4 +1,4 @@
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Bookmark,
@@ -15,6 +15,7 @@ import {
 import { ApiError, type ApiClient } from '../api/client';
 import { sanitizeHttpUrl } from '../components/SafeMarkdown';
 import { DEFAULTS } from '../constants/routes';
+import { type TranslateFn, useI18n } from '../i18n';
 import type { PlatformBridge } from '../platform/bridge';
 import type {
   ItemSearchParams,
@@ -46,7 +47,7 @@ interface SearchFilters {
   bookmarkedOnly: boolean;
 }
 
-function toUiError(err: unknown): UiErrorState {
+function toUiError(err: unknown, t: TranslateFn): UiErrorState {
   if (err instanceof ApiError) {
     return {
       code: err.code,
@@ -57,7 +58,7 @@ function toUiError(err: unknown): UiErrorState {
   if (err instanceof Error) {
     return { message: err.message };
   }
-  return { message: 'Unexpected error occurred' };
+  return { message: t('common.unexpectedError') };
 }
 
 function priorityBadgeClass(priority: AlertPriority): string {
@@ -71,23 +72,16 @@ function priorityBadgeClass(priority: AlertPriority): string {
   }
 }
 
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) {
-    return 'Unknown time';
-  }
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return value;
-  }
-  return parsed.toLocaleString();
-}
-
 export function HistorySearchPage({
   api,
   bridge,
   initialQuery = '',
   initialBookmarked = false,
 }: HistorySearchPageProps) {
+  const { t, formatDateTime, labelAlertPriority } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const [sources, setSources] = useState<UserSourceView[]>([]);
   const [filters, setFilters] = useState<SearchFilters>({
     q: initialQuery,
@@ -156,7 +150,7 @@ export function HistorySearchPage({
         activeFilters.dateTo &&
         activeFilters.dateFrom > activeFilters.dateTo
       ) {
-        setDateError('Start date must be on or before end date.');
+        setDateError(tRef.current('history.dateRangeError'));
         return;
       }
 
@@ -177,7 +171,7 @@ export function HistorySearchPage({
         const res = await api.searchItems(params);
         setResults(res);
       } catch (err) {
-        setError(toUiError(err));
+        setError(toUiError(err, tRef.current));
       } finally {
         setLoading(false);
       }
@@ -191,7 +185,7 @@ export function HistorySearchPage({
 
   const validateDates = (from: string, to: string): string | null => {
     if (from && to && from > to) {
-      return 'Start date must be on or before end date.';
+      return t('history.dateRangeError');
     }
     return null;
   };
@@ -266,7 +260,7 @@ export function HistorySearchPage({
         );
       }
     } catch (err) {
-      setError(toUiError(err));
+      setError(toUiError(err, t));
     } finally {
       setBookmarkBusyId(null);
     }
@@ -300,7 +294,7 @@ export function HistorySearchPage({
       );
       setEditingNoteItemId(null);
     } catch (err) {
-      setError(toUiError(err));
+      setError(toUiError(err, t));
     } finally {
       setSavingNoteId(null);
     }
@@ -309,11 +303,8 @@ export function HistorySearchPage({
   return (
     <div className="space-y-5">
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-white">History &amp; Bookmarks</h1>
-        <p className="text-xs text-slate-400">
-          Full-text search across collected items, filter by source or watchlist keyword, and manage
-          bookmark notes.
-        </p>
+        <h1 className="text-xl font-bold tracking-tight text-white">{t('history.title')}</h1>
+        <p className="text-xs text-slate-400">{t('history.subtitle')}</p>
       </div>
 
       {/* Filter Bar */}
@@ -326,8 +317,8 @@ export function HistorySearchPage({
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-slate-500" />
             <input
               type="text"
-              aria-label="Search query"
-              placeholder="Full-text search (title, summary, author)..."
+              aria-label={t('history.searchAria')}
+              placeholder={t('history.searchPlaceholder')}
               value={filters.q}
               onChange={(event) => setFilters((prev) => ({ ...prev, q: event.target.value }))}
               className="w-full rounded-lg border border-slate-700 bg-slate-950/80 py-2 pl-9 pr-3 text-xs text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
@@ -336,14 +327,14 @@ export function HistorySearchPage({
 
           <div className="md:col-span-4">
             <select
-              aria-label="Filter by source"
+              aria-label={t('history.sourceFilterAria')}
               value={filters.sourceId}
               onChange={(event) =>
                 setFilters((prev) => ({ ...prev, sourceId: event.target.value }))
               }
               className="w-full rounded-lg border border-slate-700 bg-slate-950/80 px-3 py-2 text-xs text-slate-200 focus:border-indigo-500 focus:outline-none"
             >
-              <option value="">All subscribed sources</option>
+              <option value="">{t('history.allSources')}</option>
               {sources.map((source) => (
                 <option key={source.id} value={source.id}>
                   {source.customName || source.defaultName} ({source.category})
@@ -355,8 +346,8 @@ export function HistorySearchPage({
           <div className="md:col-span-3">
             <input
               type="text"
-              aria-label="Matched keyword"
-              placeholder="Matched keyword..."
+              aria-label={t('history.keywordAria')}
+              placeholder={t('history.keywordPlaceholder')}
               value={filters.keyword}
               onChange={(event) =>
                 setFilters((prev) => ({ ...prev, keyword: event.target.value }))
@@ -369,10 +360,10 @@ export function HistorySearchPage({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-xs text-slate-300">
-              <span>From</span>
+              <span>{t('history.from')}</span>
               <input
                 type="date"
-                aria-label="Date from"
+                aria-label={t('history.dateFromAria')}
                 value={filters.dateFrom}
                 onChange={(event) => {
                   const nextFrom = event.target.value;
@@ -384,10 +375,10 @@ export function HistorySearchPage({
             </label>
 
             <label className="flex items-center gap-2 text-xs text-slate-300">
-              <span>To</span>
+              <span>{t('history.to')}</span>
               <input
                 type="date"
-                aria-label="Date to"
+                aria-label={t('history.dateToAria')}
                 value={filters.dateTo}
                 onChange={(event) => {
                   const nextTo = event.target.value;
@@ -413,7 +404,7 @@ export function HistorySearchPage({
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                All
+                {t('history.allFilter')}
               </button>
               <button
                 type="button"
@@ -429,7 +420,7 @@ export function HistorySearchPage({
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
-                Bookmarked only
+                {t('history.bookmarkedOnly')}
               </button>
             </div>
           </div>
@@ -441,7 +432,7 @@ export function HistorySearchPage({
               className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
             >
               <RotateCcw className="h-3.5 w-3.5" />
-              Reset
+              {t('history.reset')}
             </button>
             <button
               type="submit"
@@ -449,7 +440,7 @@ export function HistorySearchPage({
               className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
             >
               <Search className="h-3.5 w-3.5" />
-              Search
+              {t('history.search')}
             </button>
           </div>
         </div>
@@ -476,7 +467,7 @@ export function HistorySearchPage({
               </div>
               {error.requestId && (
                 <div className="font-mono text-xs text-rose-300/80">
-                  Request ID: {error.requestId}
+                  {t('common.requestId', { id: error.requestId })}
                 </div>
               )}
             </div>
@@ -486,7 +477,7 @@ export function HistorySearchPage({
             onClick={() => setError(null)}
             className="text-xs text-rose-300 hover:text-white"
           >
-            Dismiss
+            {t('common.dismiss')}
           </button>
         </div>
       )}
@@ -495,10 +486,16 @@ export function HistorySearchPage({
       {results && (
         <div className="flex items-center justify-between text-xs text-slate-400">
           <span>
-            Showing {results.items.length} of {results.total} items
+            {t('history.showingResults', {
+              shown: results.items.length,
+              total: results.total,
+            })}
           </span>
           <span>
-            Page {results.page} of {Math.max(1, results.totalPages)}
+            {t('common.pageOf', {
+              page: results.page,
+              totalPages: Math.max(1, results.totalPages),
+            })}
           </span>
         </div>
       )}
@@ -507,11 +504,11 @@ export function HistorySearchPage({
       {loading ? (
         <div className="flex items-center justify-center gap-2 rounded-xl border border-slate-800 bg-slate-900/50 py-14 text-xs text-slate-400">
           <Loader2 className="h-4 w-4 animate-spin text-indigo-400" />
-          Searching collected items...
+          {t('history.searching')}
         </div>
       ) : !results || results.items.length === 0 ? (
         <div className="rounded-xl border border-dashed border-slate-800 bg-slate-900/40 py-12 text-center text-xs text-slate-400">
-          No items match your current filters.
+          {t('history.noResults')}
         </div>
       ) : (
         <div className="space-y-3">
@@ -540,16 +537,19 @@ export function HistorySearchPage({
                           item.priority,
                         )}`}
                       >
-                        {item.priority}
+                        {labelAlertPriority(item.priority)}
                       </span>
                       <span className="text-[11px] text-slate-400">
-                        Score: {item.importanceScore}
+                        {t('common.score')}: {item.importanceScore}
                       </span>
                       {item.author && (
-                        <span className="text-[11px] text-slate-400">by {item.author}</span>
+                        <span className="text-[11px] text-slate-400">
+                          {t('common.byAuthor', { author: item.author })}
+                        </span>
                       )}
                       <span className="text-[11px] text-slate-500">
-                        {formatDateTime(item.publishedAt ?? item.fetchedAt)}
+                        {formatDateTime(item.publishedAt ?? item.fetchedAt) ||
+                          t('common.unknownTime')}
                       </span>
                     </div>
 
@@ -573,7 +573,7 @@ export function HistorySearchPage({
 
                     {item.bodyPruned ? (
                       <span className="inline-block rounded border border-slate-700 bg-slate-950 px-2 py-0.5 text-[11px] text-slate-400">
-                        Body pruned (&gt;180 days)
+                        {t('common.bodyPruned')}
                       </span>
                     ) : (
                       item.summary && (
@@ -597,7 +597,9 @@ export function HistorySearchPage({
                     {/* Saved Bookmark Note Display */}
                     {item.bookmarkNote && !isEditingNote && (
                       <div className="rounded-lg border border-amber-500/30 bg-amber-950/25 px-3 py-2 text-xs text-amber-200">
-                        <span className="font-semibold text-amber-300">Note: </span>
+                        <span className="font-semibold text-amber-300">
+                          {t('history.notePrefix')}
+                        </span>
                         {item.bookmarkNote}
                       </div>
                     )}
@@ -606,12 +608,12 @@ export function HistorySearchPage({
                     {isEditingNote && (
                       <div className="space-y-2 rounded-lg border border-slate-700 bg-slate-950/80 p-3">
                         <label className="block text-[11px] font-medium text-slate-300">
-                          Personal Note
+                          {t('history.personalNote')}
                           <textarea
                             rows={2}
                             value={noteDraft}
                             onChange={(event) => setNoteDraft(event.target.value)}
-                            placeholder="Write a personal note for this item..."
+                            placeholder={t('history.notePlaceholder')}
                             className="mt-1 w-full rounded-md border border-slate-700 bg-slate-900 p-2 text-xs text-slate-100 placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
                           />
                         </label>
@@ -621,7 +623,7 @@ export function HistorySearchPage({
                             onClick={() => setEditingNoteItemId(null)}
                             className="rounded-md border border-slate-700 px-2.5 py-1 text-xs text-slate-300 hover:bg-slate-800"
                           >
-                            Cancel
+                            {t('common.cancel')}
                           </button>
                           <button
                             type="button"
@@ -634,7 +636,7 @@ export function HistorySearchPage({
                             ) : (
                               <Save className="h-3 w-3" />
                             )}
-                            Save Note
+                            {t('history.saveNote')}
                           </button>
                         </div>
                       </div>
@@ -647,7 +649,11 @@ export function HistorySearchPage({
                       type="button"
                       onClick={() => void handleToggleBookmark(item)}
                       disabled={bookmarkBusy}
-                      aria-label={item.bookmarked ? 'Remove bookmark' : 'Bookmark item'}
+                      aria-label={
+                        item.bookmarked
+                          ? t('common.bookmarkAriaRemove')
+                          : t('common.bookmarkAriaAdd')
+                      }
                       className={`inline-flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition-colors ${
                         item.bookmarked
                           ? 'border-amber-500/50 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
@@ -661,7 +667,7 @@ export function HistorySearchPage({
                       ) : (
                         <Bookmark className="h-3.5 w-3.5" />
                       )}
-                      {item.bookmarked ? 'Bookmarked' : 'Bookmark'}
+                      {item.bookmarked ? t('common.bookmarked') : t('common.bookmark')}
                     </button>
 
                     <button
@@ -670,7 +676,7 @@ export function HistorySearchPage({
                       className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-xs font-medium text-slate-300 hover:bg-slate-800"
                     >
                       <NotebookPen className="h-3.5 w-3.5" />
-                      {item.bookmarkNote ? 'Edit Note' : 'Add Note'}
+                      {item.bookmarkNote ? t('history.editNote') : t('history.addNote')}
                     </button>
                   </div>
                 </div>
@@ -684,7 +690,11 @@ export function HistorySearchPage({
       {results && results.totalPages > 1 && (
         <div className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/70 px-4 py-3 text-xs text-slate-400">
           <span>
-            Page {results.page} of {results.totalPages} ({results.total} total)
+            {t('history.paginationTotal', {
+              page: results.page,
+              totalPages: results.totalPages,
+              total: results.total,
+            })}
           </span>
           <div className="flex items-center gap-2">
             <button
@@ -694,7 +704,7 @@ export function HistorySearchPage({
               className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-slate-200 hover:bg-slate-800 disabled:opacity-40"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
-              Previous
+              {t('common.previous')}
             </button>
             <button
               type="button"
@@ -702,7 +712,7 @@ export function HistorySearchPage({
               onClick={() => setPage((p) => p + 1)}
               className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-950 px-3 py-1.5 text-slate-200 hover:bg-slate-800 disabled:opacity-40"
             >
-              Next
+              {t('common.next')}
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
           </div>

@@ -1,4 +1,4 @@
-import { type ChangeEvent, type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type ChangeEvent, type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
   Download,
@@ -12,7 +12,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { ApiError, type ApiClient } from '../../api/client';
-import { DEFAULTS } from '../../constants/routes';
+import { type TranslateFn, useI18n } from '../../i18n';
 import type {
   CreateSourceCmd,
   SourceCredentialsPayload,
@@ -27,28 +27,30 @@ export interface SourcesPanelProps {
   api: ApiClient;
 }
 
-const SOURCE_TYPE_OPTIONS: { value: SourceType; label: string }[] = [
-  { value: SourceType.RSS, label: 'RSS / Atom Feed' },
-  { value: SourceType.GITHUB_RELEASE, label: 'GitHub Releases' },
-  { value: SourceType.REDDIT, label: 'Reddit Subreddit' },
-  { value: SourceType.HACKER_NEWS, label: 'Hacker News' },
-  { value: SourceType.GOOGLE_NEWS, label: 'Google News' },
-  { value: SourceType.X_ACCOUNT, label: 'X Account (Private)' },
-  { value: SourceType.X_SEARCH, label: 'X Search (Private)' },
+const SOURCE_TYPE_VALUES: readonly SourceType[] = [
+  SourceType.RSS,
+  SourceType.GITHUB_RELEASE,
+  SourceType.REDDIT,
+  SourceType.HACKER_NEWS,
+  SourceType.GOOGLE_NEWS,
+  SourceType.X_ACCOUNT,
+  SourceType.X_SEARCH,
 ];
 
 function isXSourceType(sourceType: SourceType): boolean {
   return sourceType === SourceType.X_ACCOUNT || sourceType === SourceType.X_SEARCH;
 }
 
-function formatError(err: unknown): string {
+function formatError(err: unknown, t: TranslateFn): string {
   if (err instanceof ApiError) {
-    return err.requestId ? `${err.message} (Request ID: ${err.requestId})` : err.message;
+    return err.requestId
+      ? `${err.message} (${t('common.requestId', { id: err.requestId })})`
+      : err.message;
   }
   if (err instanceof Error) {
     return err.message;
   }
-  return 'Unexpected error';
+  return t('common.unexpectedError');
 }
 
 function getOutcomeBadgeClass(outcome: FetchOutcome | null): string {
@@ -66,6 +68,10 @@ function getOutcomeBadgeClass(outcome: FetchOutcome | null): string {
 }
 
 export function SourcesPanel({ api }: SourcesPanelProps) {
+  const { t, labelSourceType, labelSourceScope, labelFetchOutcome } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+
   const [sources, setSources] = useState<UserSourceView[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,7 +81,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
   const [newSourceType, setNewSourceType] = useState<SourceType>(SourceType.RSS);
   const [newScope, setNewScope] = useState<SourceScope>(SourceScope.SHARED_PUBLIC);
   const [newCustomName, setNewCustomName] = useState<string>('');
-  const [newCategory, setNewCategory] = useState<string>('Custom');
+  const [newCategory, setNewCategory] = useState<string>(() => t('sourceSettings.categoryDefault'));
   const [newHandleOrUrl, setNewHandleOrUrl] = useState<string>('');
   const [newBearerToken, setNewBearerToken] = useState<string>('');
   const [newApiBaseUrl, setNewApiBaseUrl] = useState<string>('');
@@ -112,7 +118,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       const list = await api.listSources();
       setSources(list);
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, tRef.current));
     } finally {
       setLoading(false);
     }
@@ -135,7 +141,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
     setStatusMessage(null);
 
     if (!newHandleOrUrl.trim()) {
-      setError('Handle or URL is required.');
+      setError(t('sourceSettings.handleRequired'));
       return;
     }
 
@@ -168,9 +174,9 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       setNewHandleOrUrl('');
       setNewBearerToken('');
       setNewApiBaseUrl('');
-      setStatusMessage(`Subscribed to source "${created.customName}".`);
+      setStatusMessage(t('sourceSettings.subscribedMsg', { name: created.customName }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setCreating(false);
     }
@@ -183,9 +189,9 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
     try {
       const res = await api.importPresetSources({ includeXTemplates });
       await loadSources();
-      setStatusMessage(`Imported ${res.importedCount} preset sources.`);
+      setStatusMessage(t('sourceSettings.importedPresetMsg', { count: res.importedCount }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setImportingPreset(false);
     }
@@ -198,7 +204,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       const updated = await api.updateSource(source.id, { enabled: !source.enabled });
       setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setBusyIds((prev) => ({ ...prev, [source.id]: false }));
     }
@@ -219,7 +225,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
     setStatusMessage(null);
 
     if (!editCustomName.trim() || !editCategory.trim()) {
-      setError('Custom Name and Category are required.');
+      setError(t('sourceSettings.editRequired'));
       return;
     }
 
@@ -230,7 +236,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
 
     if (source.scope === SourceScope.USER_PRIVATE) {
       if (!editHandleOrUrl.trim()) {
-        setError('Handle or URL cannot be empty.');
+        setError(t('sourceSettings.handleEmptyError'));
         return;
       }
       if (editHandleOrUrl.trim() !== source.handleOrUrl) {
@@ -257,9 +263,9 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       const updated = await api.updateSource(source.id, cmd);
       setSources((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
       setEditingId(null);
-      setStatusMessage(`Updated source "${updated.customName}".`);
+      setStatusMessage(t('sourceSettings.updatedMsg', { name: updated.customName }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setSavingEdit(false);
     }
@@ -275,9 +281,9 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       if (editingId === source.id) {
         setEditingId(null);
       }
-      setStatusMessage(`Removed source "${source.customName}".`);
+      setStatusMessage(t('sourceSettings.removedMsg', { name: source.customName }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setBusyIds((prev) => ({ ...prev, [source.id]: false }));
     }
@@ -290,7 +296,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       const result = await api.testSource(source.id);
       setTestResults((prev) => ({ ...prev, [source.id]: result }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setBusyIds((prev) => ({ ...prev, [source.id]: false }));
     }
@@ -304,9 +310,9 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       const bundle = await api.exportSources();
       const pretty = JSON.stringify(bundle, null, 2);
       setExportedJson(pretty);
-      setStatusMessage(`Exported ${bundle.sources.length} non-secret source definitions.`);
+      setStatusMessage(t('sourceSettings.exportedMsg', { count: bundle.sources.length }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setExporting(false);
     }
@@ -334,7 +340,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       const text = await file.text();
       setImportJson(text);
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     }
   };
 
@@ -342,14 +348,14 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
     setError(null);
     setStatusMessage(null);
     if (!importJson.trim()) {
-      setError('Paste or upload a valid source export JSON bundle first.');
+      setError(t('sourceSettings.importEmptyError'));
       return;
     }
     let parsed: SourceExportBundle;
     try {
       parsed = JSON.parse(importJson) as SourceExportBundle;
     } catch {
-      setError('Invalid JSON syntax in source import bundle.');
+      setError(t('sourceSettings.importInvalidJson'));
       return;
     }
     if (
@@ -358,7 +364,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       typeof parsed.version !== 'number' ||
       !Array.isArray(parsed.sources)
     ) {
-      setError('Source bundle must include numeric "version" and "sources" array.');
+      setError(t('sourceSettings.importInvalidShape'));
       return;
     }
 
@@ -367,9 +373,9 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       const res = await api.importSources(parsed);
       await loadSources();
       setImportJson('');
-      setStatusMessage(`Imported ${res.importedCount} sources from JSON bundle.`);
+      setStatusMessage(t('sourceSettings.importedJsonMsg', { count: res.importedCount }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setImportingJson(false);
     }
@@ -401,11 +407,10 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-semibold text-white">{DEFAULTS.PRESET_PACK_NAME}</h2>
-            <p className="mt-1 text-xs text-slate-400">
-              Subscribe in one click to curated Gemini blogs, GitHub releases, Reddit, HN, and
-              news feeds.
-            </p>
+            <h2 className="text-base font-semibold text-white">
+              {t('sourceSettings.presetTitle')}
+            </h2>
+            <p className="mt-1 text-xs text-slate-400">{t('sourceSettings.presetDesc')}</p>
             <label className="mt-3 inline-flex items-center gap-2 text-xs text-slate-300">
               <input
                 type="checkbox"
@@ -413,7 +418,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                 onChange={(e) => setIncludeXTemplates(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900 text-indigo-500"
               />
-              <span>Include X account templates (private scope)</span>
+              <span>{t('sourceSettings.includeXTemplates')}</span>
             </label>
           </div>
           <button
@@ -423,7 +428,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
             className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <PackagePlus className="h-4 w-4" />
-            {importingPreset ? 'Importing...' : 'Import Preset Pack'}
+            {importingPreset ? t('sourceSettings.importing') : t('sourceSettings.importPreset')}
           </button>
         </div>
       </section>
@@ -431,25 +436,22 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       {/* Add Source Form */}
       <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
         <div>
-          <h2 className="text-base font-semibold text-white">Add Source or Account</h2>
-          <p className="mt-0.5 text-xs text-slate-400">
-            Public feeds are fetched once and shared across subscribers. Sources with credentials
-            or X templates are isolated under <span className="font-mono">user_private</span> scope.
-          </p>
+          <h2 className="text-base font-semibold text-white">{t('sourceSettings.addTitle')}</h2>
+          <p className="mt-0.5 text-xs text-slate-400">{t('sourceSettings.addDesc')}</p>
         </div>
 
         <form onSubmit={(e) => void handleAddSource(e)} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">Source Type</span>
+              <span className="font-medium text-slate-200">{t('sourceSettings.sourceType')}</span>
               <select
                 value={newSourceType}
                 onChange={(e) => setNewSourceType(e.target.value as SourceType)}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none"
               >
-                {SOURCE_TYPE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
+                {SOURCE_TYPE_VALUES.map((val) => (
+                  <option key={val} value={val}>
+                    {labelSourceType(val)}
                   </option>
                 ))}
               </select>
@@ -457,7 +459,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
 
             <label className="block space-y-1.5 text-xs">
               <span className="flex items-center gap-1 font-medium text-slate-200">
-                Scope
+                {t('sourceSettings.scope')}
                 {scopeLockedToPrivate && <Lock className="h-3 w-3 text-amber-400" />}
               </span>
               <select
@@ -466,61 +468,67 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                 onChange={(e) => setNewScope(e.target.value as SourceScope)}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white focus:border-indigo-500 focus:outline-none disabled:opacity-60"
               >
-                <option value={SourceScope.SHARED_PUBLIC}>shared_public</option>
-                <option value={SourceScope.USER_PRIVATE}>user_private</option>
+                <option value={SourceScope.SHARED_PUBLIC}>
+                  {labelSourceScope(SourceScope.SHARED_PUBLIC)}
+                </option>
+                <option value={SourceScope.USER_PRIVATE}>
+                  {labelSourceScope(SourceScope.USER_PRIVATE)}
+                </option>
               </select>
             </label>
 
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">Custom Name</span>
+              <span className="font-medium text-slate-200">{t('sourceSettings.customName')}</span>
               <input
                 type="text"
                 value={newCustomName}
                 onChange={(e) => setNewCustomName(e.target.value)}
-                placeholder="e.g. Google AI Blog"
+                placeholder={t('sourceSettings.customNamePlaceholder')}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
               />
             </label>
 
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">Category</span>
+              <span className="font-medium text-slate-200">{t('sourceSettings.category')}</span>
               <input
                 type="text"
                 value={newCategory}
                 onChange={(e) => setNewCategory(e.target.value)}
-                placeholder="Official / Releases / Social"
+                placeholder={t('sourceSettings.categoryPlaceholder')}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
               />
             </label>
           </div>
 
           <label className="block space-y-1.5 text-xs">
-            <span className="font-medium text-slate-200">Handle or URL</span>
+            <span className="font-medium text-slate-200">{t('sourceSettings.handleOrUrl')}</span>
             <input
               type="text"
               value={newHandleOrUrl}
               onChange={(e) => setNewHandleOrUrl(e.target.value)}
               required
-              placeholder="https://example.com/feed.xml or owner/repo or @handle"
+              placeholder={t('sourceSettings.handleOrUrlPlaceholder')}
               className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
             />
           </label>
 
           <div className="grid gap-4 rounded-lg border border-slate-800 bg-slate-950/50 p-4 sm:grid-cols-2">
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">Bearer Token (optional)</span>
+              <span className="font-medium text-slate-200">
+                {t('sourceSettings.bearerToken')}
+              </span>
               <input
                 type="password"
                 autoComplete="new-password"
                 value={newBearerToken}
                 onChange={(e) => setNewBearerToken(e.target.value)}
-                placeholder="Stored encrypted; forces user_private scope"
+                placeholder={t('sourceSettings.bearerTokenPlaceholder')}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white placeholder:text-slate-500 focus:border-indigo-500 focus:outline-none"
               />
             </label>
 
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">API Base URL (optional, X sources)</span>
+              <span className="font-medium text-slate-200">{t('sourceSettings.apiBaseUrl')}</span>
               <input
                 type="url"
                 value={newApiBaseUrl}
@@ -532,10 +540,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
           </div>
 
           {scopeLockedToPrivate && (
-            <p className="text-xs text-amber-300">
-              Scope is locked to <span className="font-mono">user_private</span> because X
-              sources and credentialed sources cannot be shared publicly.
-            </p>
+            <p className="text-xs text-amber-300">{t('sourceSettings.scopeLockedWarning')}</p>
           )}
 
           <button
@@ -544,7 +549,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
             className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus className="h-4 w-4" />
-            {creating ? 'Adding...' : 'Add Source'}
+            {creating ? t('sourceSettings.addingBtn') : t('sourceSettings.addBtn')}
           </button>
         </form>
       </section>
@@ -553,17 +558,14 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold text-white">
-            Subscribed Sources ({sources.length})
+            {t('sourceSettings.listTitle', { count: sources.length })}
           </h2>
         </div>
 
         {loading ? (
-          <p className="py-4 text-sm text-slate-400">Loading subscribed sources...</p>
+          <p className="py-4 text-sm text-slate-400">{t('sourceSettings.loading')}</p>
         ) : sources.length === 0 ? (
-          <p className="py-4 text-sm text-slate-500">
-            No sources subscribed yet. Import the Gemini Ecosystem Preset Pack or add a custom
-            source above.
-          </p>
+          <p className="py-4 text-sm text-slate-500">{t('sourceSettings.empty')}</p>
         ) : (
           <div className="space-y-3">
             {sources.map((src) => {
@@ -582,7 +584,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-semibold text-white">{src.customName}</span>
                         <span className="rounded border border-slate-700 bg-slate-800 px-2 py-0.5 font-mono text-[11px] text-slate-300">
-                          {src.sourceType}
+                          {labelSourceType(src.sourceType)}
                         </span>
                         <span
                           className={`rounded border px-2 py-0.5 font-mono text-[11px] ${
@@ -591,7 +593,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                               : 'border-indigo-500/30 bg-indigo-500/10 text-indigo-300'
                           }`}
                         >
-                          {src.scope}
+                          {labelSourceScope(src.scope)}
                         </span>
                         <span className="rounded border border-slate-700 bg-slate-900 px-2 py-0.5 text-[11px] text-slate-300">
                           {src.category}
@@ -599,18 +601,22 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                         <span
                           className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${getOutcomeBadgeClass(src.lastStatus)}`}
                         >
-                          {src.lastStatus ?? 'pending'}
+                          {labelFetchOutcome(src.lastStatus, 'pending')}
                         </span>
                       </div>
                       <div className="text-xs text-slate-400 break-all">{src.handleOrUrl}</div>
                       {src.hasCredentials && (
                         <div className="text-[11px] text-emerald-300">
-                          Credentials configured{src.configHint ? ` (${src.configHint})` : ''}
+                          {t('sourceSettings.credentialsConfigured')}
+                          {src.configHint ? ` (${src.configHint})` : ''}
                         </div>
                       )}
                       {src.lastError && (
                         <div className="text-xs text-rose-300">
-                          Error ({src.consecutiveFailures} failures): {src.lastError}
+                          {t('sourceSettings.errorWithFailures', {
+                            count: src.consecutiveFailures,
+                            error: src.lastError,
+                          })}
                         </div>
                       )}
                     </div>
@@ -626,7 +632,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                             : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'
                         }`}
                       >
-                        {src.enabled ? 'Enabled' : 'Paused'}
+                        {src.enabled ? t('common.enabled') : t('common.paused')}
                       </button>
 
                       <button
@@ -636,7 +642,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
                       >
                         <FlaskConical className="h-3.5 w-3.5 text-cyan-400" />
-                        Test
+                        {t('common.test')}
                       </button>
 
                       <button
@@ -646,7 +652,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
                       >
                         <Edit3 className="h-3.5 w-3.5" />
-                        {isEditing ? 'Cancel' : 'Edit'}
+                        {isEditing ? t('common.cancel') : t('common.edit')}
                       </button>
 
                       <button
@@ -656,7 +662,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                         className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                        Delete
+                        {t('common.delete')}
                       </button>
                     </div>
                   </div>
@@ -665,7 +671,9 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                     <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/70 p-4">
                       <div className="grid gap-3 sm:grid-cols-2">
                         <label className="block space-y-1 text-xs">
-                          <span className="font-medium text-slate-200">Custom Name</span>
+                          <span className="font-medium text-slate-200">
+                            {t('sourceSettings.customName')}
+                          </span>
                           <input
                             type="text"
                             value={editCustomName}
@@ -674,7 +682,9 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                           />
                         </label>
                         <label className="block space-y-1 text-xs">
-                          <span className="font-medium text-slate-200">Category</span>
+                          <span className="font-medium text-slate-200">
+                            {t('sourceSettings.category')}
+                          </span>
                           <input
                             type="text"
                             value={editCategory}
@@ -687,7 +697,9 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                       {isPrivate && (
                         <div className="space-y-3 border-t border-slate-800 pt-3">
                           <label className="block space-y-1 text-xs">
-                            <span className="font-medium text-slate-200">Handle or URL</span>
+                            <span className="font-medium text-slate-200">
+                              {t('sourceSettings.handleOrUrl')}
+                            </span>
                             <input
                               type="text"
                               value={editHandleOrUrl}
@@ -698,7 +710,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                           <div className="grid gap-3 sm:grid-cols-2">
                             <label className="block space-y-1 text-xs">
                               <span className="font-medium text-slate-200">
-                                New Bearer Token (optional)
+                                {t('sourceSettings.newBearerToken')}
                               </span>
                               <input
                                 type="password"
@@ -706,13 +718,13 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                                 value={editBearerToken}
                                 disabled={editClearCredentials}
                                 onChange={(e) => setEditBearerToken(e.target.value)}
-                                placeholder="Leave blank to keep existing"
+                                placeholder={t('sourceSettings.keepExistingPlaceholder')}
                                 className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-white disabled:opacity-50"
                               />
                             </label>
                             <label className="block space-y-1 text-xs">
                               <span className="font-medium text-slate-200">
-                                New API Base URL (optional)
+                                {t('sourceSettings.newApiBaseUrl')}
                               </span>
                               <input
                                 type="url"
@@ -731,7 +743,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                               onChange={(e) => setEditClearCredentials(e.target.checked)}
                               className="h-4 w-4 rounded border-slate-600 bg-slate-900"
                             />
-                            <span>Clear stored credentials</span>
+                            <span>{t('sourceSettings.clearCredentials')}</span>
                           </label>
                         </div>
                       )}
@@ -743,7 +755,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                           onClick={() => void handleSaveEdit(src)}
                           className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
                         >
-                          {savingEdit ? 'Saving...' : 'Save Changes'}
+                          {savingEdit ? t('common.saving') : t('common.saveChanges')}
                         </button>
                       </div>
                     </div>
@@ -759,7 +771,10 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                       }`}
                     >
                       <div className="font-medium">
-                        Live Test: {testRes.outcome} • {testRes.itemsFetched} items fetched
+                        {t('sourceSettings.liveTestResult', {
+                          outcome: labelFetchOutcome(testRes.outcome),
+                          count: testRes.itemsFetched,
+                        })}
                       </div>
                       {testRes.errorMessage && (
                         <div className="mt-1 text-rose-300">{testRes.errorMessage}</div>
@@ -783,10 +798,8 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
       {/* Non-Secret JSON Export & Import */}
       <section className="rounded-xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
         <div>
-          <h2 className="text-base font-semibold text-white">Portable JSON Export &amp; Import</h2>
-          <p className="mt-0.5 text-xs text-slate-400">
-            Exported bundles omit all encrypted credentials and tokens.
-          </p>
+          <h2 className="text-base font-semibold text-white">{t('sourceSettings.exportTitle')}</h2>
+          <p className="mt-0.5 text-xs text-slate-400">{t('sourceSettings.exportDesc')}</p>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
@@ -799,7 +812,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-100 hover:bg-slate-700 disabled:opacity-50"
               >
                 <Download className="h-3.5 w-3.5" />
-                {exporting ? 'Exporting...' : 'Export Sources JSON'}
+                {exporting ? t('sourceSettings.exportingBtn') : t('sourceSettings.exportBtn')}
               </button>
               {exportedJson && (
                 <button
@@ -807,7 +820,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                   onClick={handleDownloadExport}
                   className="inline-flex items-center gap-2 rounded-lg border border-indigo-500/40 bg-indigo-500/15 px-3 py-2 text-xs font-medium text-indigo-200 hover:bg-indigo-500/25"
                 >
-                  Download .json
+                  {t('sourceSettings.downloadJson')}
                 </button>
               )}
             </div>
@@ -815,8 +828,8 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
               rows={6}
               readOnly
               value={exportedJson}
-              placeholder="Click Export Sources JSON to generate a portable non-secret bundle..."
-              aria-label="Exported sources JSON"
+              placeholder={t('sourceSettings.exportPlaceholder')}
+              aria-label={t('sourceSettings.exportAria')}
               className="w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-200 placeholder:text-slate-500"
             />
           </div>
@@ -825,7 +838,7 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
             <div className="flex flex-wrap items-center gap-2">
               <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-xs font-medium text-slate-100 hover:bg-slate-700">
                 <Upload className="h-3.5 w-3.5" />
-                <span>Load JSON File</span>
+                <span>{t('sourceSettings.loadJsonFile')}</span>
                 <input
                   type="file"
                   accept=".json,application/json"
@@ -839,15 +852,15 @@ export function SourcesPanel({ api }: SourcesPanelProps) {
                 onClick={() => void handleImportJson()}
                 className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
               >
-                {importingJson ? 'Importing...' : 'Import Sources JSON'}
+                {importingJson ? t('sourceSettings.importing') : t('sourceSettings.importBtn')}
               </button>
             </div>
             <textarea
               rows={6}
               value={importJson}
               onChange={(e) => setImportJson(e.target.value)}
-              placeholder='Paste SourceExportBundle JSON ({ "version": 1, "sources": [...] })'
-              aria-label="Import sources JSON"
+              placeholder={t('sourceSettings.importPlaceholder')}
+              aria-label={t('sourceSettings.importAria')}
               className="w-full rounded-lg border border-slate-700 bg-slate-950 p-3 font-mono text-xs text-slate-200 placeholder:text-slate-500"
             />
           </div>

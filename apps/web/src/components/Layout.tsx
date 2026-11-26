@@ -17,11 +17,13 @@ import {
 } from 'lucide-react';
 import React, { useState } from 'react';
 import { useAuth } from '../auth/AuthProvider';
-import { APP_INFO, APP_ROUTES } from '../constants/routes';
+import { APP_ROUTES } from '../constants/routes';
 import type { SseConnectionStatus } from '../hooks/useSse';
+import { type TranslationKey, useI18n } from '../i18n';
 import { type PlatformBridge, PlatformRuntime, isAllowedExternalUrl } from '../platform/bridge';
 import type { AlertTriggeredEvent } from '../types/api';
 import { AuthMode } from '../types/enums';
+import { LanguageSwitcher } from './LanguageSwitcher';
 
 export interface LayoutProps {
   currentRoute: string;
@@ -35,51 +37,51 @@ export interface LayoutProps {
 
 interface NavItem {
   route: string;
-  label: string;
+  labelKey: TranslationKey;
   icon: React.ComponentType<{ className?: string }>;
 }
 
 const NAV_ITEMS: readonly NavItem[] = [
-  { route: APP_ROUTES.DAILY, label: 'Daily Digest', icon: Newspaper },
-  { route: APP_ROUTES.SOURCES, label: 'Sources', icon: Radio },
-  { route: APP_ROUTES.HISTORY, label: 'History', icon: Bookmark },
-  { route: APP_ROUTES.RUNS, label: 'Runs & Stats', icon: Activity },
-  { route: APP_ROUTES.SETTINGS, label: 'Settings', icon: Settings },
+  { route: APP_ROUTES.DAILY, labelKey: 'nav.daily', icon: Newspaper },
+  { route: APP_ROUTES.SOURCES, labelKey: 'nav.sources', icon: Radio },
+  { route: APP_ROUTES.HISTORY, labelKey: 'nav.history', icon: Bookmark },
+  { route: APP_ROUTES.RUNS, labelKey: 'nav.runs', icon: Activity },
+  { route: APP_ROUTES.SETTINGS, labelKey: 'nav.settings', icon: Settings },
 ];
 
 function getSseStatusDisplay(status: SseConnectionStatus): {
-  label: string;
+  labelKey: TranslationKey;
   dotClass: string;
   pillClass: string;
 } {
   switch (status) {
     case 'connected':
       return {
-        label: 'Live',
+        labelKey: 'sse.live',
         dotClass: 'bg-emerald-400',
         pillClass: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
       };
     case 'connecting':
       return {
-        label: 'Connecting',
+        labelKey: 'sse.connecting',
         dotClass: 'bg-sky-400 animate-pulse',
         pillClass: 'border-sky-500/30 bg-sky-500/10 text-sky-300',
       };
     case 'reconnecting':
       return {
-        label: 'Reconnecting',
+        labelKey: 'sse.reconnecting',
         dotClass: 'bg-amber-400 animate-pulse',
         pillClass: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
       };
     case 'error':
       return {
-        label: 'Stream Error',
+        labelKey: 'sse.error',
         dotClass: 'bg-rose-400',
         pillClass: 'border-rose-500/30 bg-rose-500/10 text-rose-300',
       };
     default:
       return {
-        label: 'Offline',
+        labelKey: 'sse.offline',
         dotClass: 'bg-slate-500',
         pillClass: 'border-slate-700 bg-slate-800/70 text-slate-400',
       };
@@ -96,11 +98,13 @@ export function Layout({
   children,
 }: LayoutProps) {
   const { user, onboarding, authConfig, logout } = useAuth();
+  const { t } = useI18n();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const sseDisplay = getSseStatusDisplay(sseStatus);
+  const sseLabel = t(sseDisplay.labelKey);
   const isOidc = authConfig?.authMode === AuthMode.OIDC;
-  const userLabel = user?.displayName || user?.email || user?.oidcSub || 'User';
+  const userLabel = user?.displayName || user?.email || user?.oidcSub || t('auth.defaultUser');
   const needsOnboarding = Boolean(onboarding && (!onboarding.hasAiConfig || !onboarding.hasSources));
   const hasUrgentAlert = Boolean(latestAlert && latestAlert.items.length > 0);
 
@@ -129,12 +133,12 @@ export function Layout({
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-semibold tracking-tight text-white sm:text-base">
-                    {APP_INFO.NAME}
+                    {t('common.appName')}
                   </span>
                   {bridge.runtime === PlatformRuntime.DESKTOP && (
                     <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300">
                       <Monitor className="h-3 w-3" />
-                      Desktop
+                      {t('common.desktopBadge')}
                     </span>
                   )}
                 </div>
@@ -142,7 +146,7 @@ export function Layout({
             </button>
           </div>
 
-          <nav className="hidden items-center gap-1 md:flex" aria-label="Primary navigation">
+          <nav className="hidden items-center gap-1 md:flex" aria-label={t('nav.primaryAria')}>
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = currentRoute === item.route;
@@ -159,19 +163,21 @@ export function Layout({
                   }`}
                 >
                   <Icon className="h-4 w-4" />
-                  {item.label}
+                  {t(item.labelKey)}
                 </button>
               );
             })}
           </nav>
 
           <div className="flex items-center gap-2.5">
+            <LanguageSwitcher />
+
             <span
               className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${sseDisplay.pillClass}`}
-              title={`SSE status: ${sseDisplay.label}`}
+              title={t('sse.statusTooltip', { label: sseLabel })}
             >
               <span className={`h-2 w-2 rounded-full ${sseDisplay.dotClass}`} />
-              <span className="hidden sm:inline">{sseDisplay.label}</span>
+              <span className="hidden sm:inline">{sseLabel}</span>
             </span>
 
             {authConfig && (
@@ -183,7 +189,7 @@ export function Layout({
                 }`}
               >
                 <Shield className="h-3 w-3" />
-                {isOidc ? 'OIDC' : 'Dev Bypass'}
+                {isOidc ? t('auth.modeOidc') : t('auth.modeDevBypass')}
               </span>
             )}
 
@@ -199,10 +205,10 @@ export function Layout({
                 type="button"
                 onClick={logout}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800 hover:text-white"
-                title="Sign out"
+                title={t('auth.signOutTitle')}
               >
                 <LogOut className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Logout</span>
+                <span className="hidden sm:inline">{t('auth.logout')}</span>
               </button>
             )}
 
@@ -210,7 +216,7 @@ export function Layout({
               type="button"
               onClick={() => setMobileMenuOpen((prev) => !prev)}
               className="inline-flex items-center justify-center rounded-lg border border-slate-800 bg-slate-900 p-2 text-slate-300 hover:bg-slate-800 hover:text-white md:hidden"
-              aria-label="Toggle navigation menu"
+              aria-label={t('nav.toggleMenuAria')}
               aria-expanded={mobileMenuOpen}
             >
               {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
@@ -221,7 +227,7 @@ export function Layout({
         {mobileMenuOpen && (
           <nav
             className="border-t border-slate-800 bg-slate-900/95 px-4 py-3 md:hidden"
-            aria-label="Mobile navigation"
+            aria-label={t('nav.mobileAria')}
           >
             <div className="flex flex-col gap-1">
               {NAV_ITEMS.map((item) => {
@@ -243,13 +249,13 @@ export function Layout({
                     }`}
                   >
                     <Icon className="h-4 w-4" />
-                    {item.label}
+                    {t(item.labelKey)}
                   </button>
                 );
               })}
               <div className="mt-2 flex items-center justify-between border-t border-slate-800 pt-2 text-xs text-slate-400">
                 <span className="truncate">{userLabel}</span>
-                {authConfig && <span>{isOidc ? 'OIDC' : 'Dev Bypass'}</span>}
+                {authConfig && <span>{isOidc ? t('auth.modeOidc') : t('auth.modeDevBypass')}</span>}
               </div>
             </div>
           </nav>
@@ -269,8 +275,13 @@ export function Layout({
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-sm font-semibold text-amber-200">
-                      Urgent Watchlist Alert ({latestAlert.count}{' '}
-                      {latestAlert.count === 1 ? 'item' : 'items'})
+                      {t('layout.urgentAlertTitle', {
+                        count: latestAlert.count,
+                        unit:
+                          latestAlert.count === 1
+                            ? t('layout.alertUnitSingle')
+                            : t('layout.alertUnitPlural'),
+                      })}
                     </h2>
                   </div>
                   <ul className="space-y-1.5 text-xs text-amber-100/90">
@@ -309,7 +320,7 @@ export function Layout({
                   type="button"
                   onClick={onDismissAlert}
                   className="rounded-lg p-1 text-amber-300 transition hover:bg-amber-500/20 hover:text-white"
-                  aria-label="Dismiss alert banner"
+                  aria-label={t('layout.dismissAlertAria')}
                 >
                   <X className="h-4 w-4" />
                 </button>
@@ -321,21 +332,27 @@ export function Layout({
         {needsOnboarding && onboarding && (
           <section className="flex flex-col justify-between gap-4 rounded-xl border border-sky-500/30 bg-sky-500/10 p-4 sm:flex-row sm:items-center">
             <div className="space-y-1.5">
-              <h2 className="text-sm font-semibold text-sky-200">
-                Complete Workspace Setup
-              </h2>
+              <h2 className="text-sm font-semibold text-sky-200">{t('layout.completeSetup')}</h2>
               <div className="flex flex-wrap items-center gap-4 text-xs text-slate-300">
                 <span className="inline-flex items-center gap-1.5">
                   <CheckCircle2
                     className={`h-4 w-4 ${onboarding.hasAiConfig ? 'text-emerald-400' : 'text-slate-500'}`}
                   />
-                  AI Provider {onboarding.hasAiConfig ? 'configured' : 'pending'}
+                  {t('layout.aiProviderStatus', {
+                    status: onboarding.hasAiConfig
+                      ? t('layout.statusConfigured')
+                      : t('layout.statusPending'),
+                  })}
                 </span>
                 <span className="inline-flex items-center gap-1.5">
                   <CheckCircle2
                     className={`h-4 w-4 ${onboarding.hasSources ? 'text-emerald-400' : 'text-slate-500'}`}
                   />
-                  Sources {onboarding.hasSources ? 'configured' : 'pending'}
+                  {t('layout.sourcesStatus', {
+                    status: onboarding.hasSources
+                      ? t('layout.statusConfigured')
+                      : t('layout.statusPending'),
+                  })}
                 </span>
               </div>
             </div>
@@ -344,7 +361,7 @@ export function Layout({
               onClick={() => onNavigate(APP_ROUTES.SETTINGS)}
               className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-sky-500 px-3.5 py-2 text-xs font-semibold text-slate-950 transition hover:bg-sky-400"
             >
-              Open Settings
+              {t('layout.openSettings')}
               <ArrowRight className="h-3.5 w-3.5" />
             </button>
           </section>

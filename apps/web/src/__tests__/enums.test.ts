@@ -7,6 +7,7 @@ import {
   DeliveryStatus,
   ErrorCode,
   FetchOutcome,
+  Locale,
   McpAccessMode,
   McpToolName,
   NotificationChannelType,
@@ -28,6 +29,7 @@ describe('Round 0 shared enums, routes, and platform bridge', () => {
       RunStatus,
       DeliveryStatus,
       AlertPriority,
+      Locale,
       McpAccessMode,
       AuthMode,
       SseEventType,
@@ -45,10 +47,12 @@ describe('Round 0 shared enums, routes, and platform bridge', () => {
 
   it('builds URL-encoded dynamic API routes', () => {
     expect(API_ROUTES.HEALTH).toBe('/health');
+    expect(API_ROUTES.SETTINGS_AI_MODELS).toBe('/api/v1/settings/ai/models');
     expect(API_ROUTES.digestByDate('2026-11-26')).toBe('/api/v1/digests/2026-11-26');
     expect(API_ROUTES.sourceDigests('id/with space')).toBe('/api/v1/sources/id%2Fwith%20space/digests');
     expect(APP_ROUTES.DAILY).toBe('/daily');
     expect(STORAGE_KEYS.SERVER_BASE_URL).toContain('gemini_digest');
+    expect(STORAGE_KEYS.LOCALE).toContain('gemini_digest');
   });
 
   it('creates WebPlatformBridge by default', () => {

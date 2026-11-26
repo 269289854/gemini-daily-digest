@@ -1,7 +1,8 @@
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import { Bell, CalendarClock, CheckCircle2, Edit3, Plus, Save, Trash2, XCircle } from 'lucide-react';
 import { ApiError, type ApiClient } from '../../api/client';
 import { DEFAULTS } from '../../constants/routes';
+import { type TranslateFn, useI18n } from '../../i18n';
 import type {
   UpdateScheduleCmd,
   UpsertWatchlistRuleCmd,
@@ -14,20 +15,22 @@ export interface ScheduleWatchlistPanelProps {
   api: ApiClient;
 }
 
-const PRIORITY_OPTIONS: { value: AlertPriority; label: string }[] = [
-  { value: AlertPriority.NORMAL, label: 'Normal' },
-  { value: AlertPriority.HIGH, label: 'High' },
-  { value: AlertPriority.URGENT, label: 'Urgent' },
+const PRIORITY_VALUES: readonly AlertPriority[] = [
+  AlertPriority.NORMAL,
+  AlertPriority.HIGH,
+  AlertPriority.URGENT,
 ];
 
-function formatError(err: unknown): string {
+function formatError(err: unknown, t: TranslateFn): string {
   if (err instanceof ApiError) {
-    return err.requestId ? `${err.message} (Request ID: ${err.requestId})` : err.message;
+    return err.requestId
+      ? `${err.message} (${t('common.requestId', { id: err.requestId })})`
+      : err.message;
   }
   if (err instanceof Error) {
     return err.message;
   }
-  return 'Unexpected error';
+  return t('common.unexpectedError');
 }
 
 function parseKeywords(raw: string): string[] {
@@ -49,6 +52,10 @@ function getPriorityBadgeClass(priority: AlertPriority): string {
 }
 
 export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
+  const { t, labelAlertPriority } = useI18n();
+  const tRef = useRef(t);
+  tRef.current = t;
+
   // Schedule State
   const [schedule, setSchedule] = useState<UserScheduleRecord | null>(null);
   const [timezone, setTimezone] = useState<string>(DEFAULTS.TIMEZONE);
@@ -104,7 +111,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
       applySchedule(sched);
       setRules(watchlist);
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, tRef.current));
     } finally {
       setLoading(false);
     }
@@ -122,21 +129,21 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
     const tz = timezone.trim();
     const dt = dailyTime.trim();
     if (!tz) {
-      setError('Timezone is required.');
+      setError(t('schedule.tzRequired'));
       return;
     }
     if (!/^\d{2}:\d{2}$/.test(dt)) {
-      setError('Daily Time must be in HH:MM 24-hour format.');
+      setError(t('schedule.timeFormatError'));
       return;
     }
     const [hh, mm] = dt.split(':').map(Number);
     if (hh < 0 || hh > 23 || mm < 0 || mm > 59) {
-      setError('Daily Time must be between 00:00 and 23:59.');
+      setError(t('schedule.timeRangeError'));
       return;
     }
     const interval = Number(alertIntervalMinutes);
     if (!Number.isInteger(interval) || interval < 1) {
-      setError('Alert Interval Minutes must be an integer >= 1.');
+      setError(t('schedule.intervalError'));
       return;
     }
 
@@ -153,9 +160,9 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
     try {
       const updated = await api.updateSchedule(cmd);
       applySchedule(updated);
-      setStatusMessage('Schedule settings saved.');
+      setStatusMessage(t('schedule.savedMsg'));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setSavingSchedule(false);
     }
@@ -168,7 +175,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
 
     const keywords = parseKeywords(newKeywords);
     if (!newName.trim() || keywords.length === 0) {
-      setError('Watchlist rule requires a name and at least one keyword.');
+      setError(t('watchlist.requiredError'));
       return;
     }
 
@@ -188,9 +195,9 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
       setNewName('');
       setNewKeywords('');
       setNewExcludeKeywords('');
-      setStatusMessage(`Created watchlist rule "${created.name}".`);
+      setStatusMessage(t('watchlist.createdMsg', { name: created.name }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setCreatingRule(false);
     }
@@ -212,7 +219,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
 
     const keywords = parseKeywords(editKeywords);
     if (!editName.trim() || keywords.length === 0) {
-      setError('Watchlist rule requires a name and at least one keyword.');
+      setError(t('watchlist.requiredError'));
       return;
     }
 
@@ -230,9 +237,9 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
       const updated = await api.updateWatchlistRule(ruleId, cmd);
       setRules((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
       setEditingRuleId(null);
-      setStatusMessage(`Updated watchlist rule "${updated.name}".`);
+      setStatusMessage(t('watchlist.updatedMsg', { name: updated.name }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setSavingRule(false);
     }
@@ -253,7 +260,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
       const updated = await api.updateWatchlistRule(rule.id, cmd);
       setRules((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setBusyRuleIds((prev) => ({ ...prev, [rule.id]: false }));
     }
@@ -269,9 +276,9 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
       if (editingRuleId === rule.id) {
         setEditingRuleId(null);
       }
-      setStatusMessage(`Deleted watchlist rule "${rule.name}".`);
+      setStatusMessage(t('watchlist.deletedMsg', { name: rule.name }));
     } catch (err) {
-      setError(formatError(err));
+      setError(formatError(err, t));
     } finally {
       setBusyRuleIds((prev) => ({ ...prev, [rule.id]: false }));
     }
@@ -280,7 +287,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
   if (loading && !schedule) {
     return (
       <div className="rounded-xl border border-slate-800 bg-slate-900/70 p-6 text-sm text-slate-400">
-        Loading schedule and watchlist rules...
+        {t('schedule.loading')}
       </div>
     );
   }
@@ -312,17 +319,15 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
         <div className="flex items-center gap-2">
           <CalendarClock className="h-5 w-5 text-indigo-400" />
           <div>
-            <h2 className="text-base font-semibold text-white">Daily Schedule &amp; Alerts</h2>
-            <p className="text-xs text-slate-400">
-              Control daily digest timing, master delivery switch, and alert scanner cadence.
-            </p>
+            <h2 className="text-base font-semibold text-white">{t('schedule.title')}</h2>
+            <p className="text-xs text-slate-400">{t('schedule.subtitle')}</p>
           </div>
         </div>
 
         <form onSubmit={(e) => void handleSaveSchedule(e)} className="space-y-4">
           <div className="grid gap-4 sm:grid-cols-3">
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">Timezone (IANA)</span>
+              <span className="font-medium text-slate-200">{t('schedule.timezone')}</span>
               <input
                 type="text"
                 value={timezone}
@@ -334,7 +339,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
             </label>
 
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">Daily Time (HH:MM)</span>
+              <span className="font-medium text-slate-200">{t('schedule.dailyTime')}</span>
               <input
                 type="text"
                 value={dailyTime}
@@ -346,7 +351,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
             </label>
 
             <label className="block space-y-1.5 text-xs">
-              <span className="font-medium text-slate-200">Alert Scan Interval (minutes)</span>
+              <span className="font-medium text-slate-200">{t('schedule.alertInterval')}</span>
               <input
                 type="number"
                 min="1"
@@ -367,7 +372,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                 onChange={(e) => setEmailEnabled(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
-              <span>Notifications Master Switch (emailEnabled)</span>
+              <span>{t('schedule.emailEnabled')}</span>
             </label>
             <label className="inline-flex items-center gap-2">
               <input
@@ -376,7 +381,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                 onChange={(e) => setSendWhenEmpty(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
-              <span>Send Even When Empty</span>
+              <span>{t('schedule.sendWhenEmpty')}</span>
             </label>
             <label className="inline-flex items-center gap-2">
               <input
@@ -385,7 +390,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                 onChange={(e) => setAlertScanEnabled(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
-              <span>Enable High-Frequency Alert Scan</span>
+              <span>{t('schedule.alertScanEnabled')}</span>
             </label>
           </div>
 
@@ -395,7 +400,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
             className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
           >
             <Save className="h-4 w-4" />
-            {savingSchedule ? 'Saving...' : 'Save Schedule'}
+            {savingSchedule ? t('common.saving') : t('schedule.saveBtn')}
           </button>
         </form>
       </section>
@@ -405,10 +410,8 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
         <div className="flex items-center gap-2">
           <Bell className="h-5 w-5 text-amber-400" />
           <div>
-            <h2 className="text-base font-semibold text-white">Watchlist Alert Rules</h2>
-            <p className="text-xs text-slate-400">
-              Highlight matching items and trigger immediate alerts for urgent keywords.
-            </p>
+            <h2 className="text-base font-semibold text-white">{t('watchlist.title')}</h2>
+            <p className="text-xs text-slate-400">{t('watchlist.subtitle')}</p>
           </div>
         </div>
 
@@ -418,27 +421,27 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
         >
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block space-y-1 text-xs">
-              <span className="font-medium text-slate-200">Rule Name</span>
+              <span className="font-medium text-slate-200">{t('watchlist.ruleName')}</span>
               <input
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 required
-                placeholder="e.g. Gemini 2.5 Releases"
+                placeholder={t('watchlist.ruleNamePlaceholder')}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
               />
             </label>
 
             <label className="block space-y-1 text-xs">
-              <span className="font-medium text-slate-200">Priority</span>
+              <span className="font-medium text-slate-200">{t('watchlist.priority')}</span>
               <select
                 value={newPriority}
                 onChange={(e) => setNewPriority(e.target.value as AlertPriority)}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
               >
-                {PRIORITY_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
+                {PRIORITY_VALUES.map((val) => (
+                  <option key={val} value={val}>
+                    {labelAlertPriority(val)}
                   </option>
                 ))}
               </select>
@@ -447,26 +450,24 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block space-y-1 text-xs">
-              <span className="font-medium text-slate-200">Keywords (comma-separated)</span>
+              <span className="font-medium text-slate-200">{t('watchlist.keywordsLabel')}</span>
               <input
                 type="text"
                 value={newKeywords}
                 onChange={(e) => setNewKeywords(e.target.value)}
                 required
-                placeholder="gemini 2.5, thinking, multimodal"
+                placeholder={t('watchlist.keywordsPlaceholder')}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
               />
             </label>
 
             <label className="block space-y-1 text-xs">
-              <span className="font-medium text-slate-200">
-                Exclude Keywords (optional, comma-separated)
-              </span>
+              <span className="font-medium text-slate-200">{t('watchlist.excludeLabel')}</span>
               <input
                 type="text"
                 value={newExcludeKeywords}
                 onChange={(e) => setNewExcludeKeywords(e.target.value)}
-                placeholder="rumor, spam"
+                placeholder={t('watchlist.excludePlaceholder')}
                 className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
               />
             </label>
@@ -480,7 +481,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                 onChange={(e) => setNewNotifyImmediately(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
-              <span>Notify Immediately</span>
+              <span>{t('watchlist.notifyImmediately')}</span>
             </label>
             <label className="inline-flex items-center gap-2">
               <input
@@ -489,7 +490,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                 onChange={(e) => setNewEnabled(e.target.checked)}
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
-              <span>Rule Enabled</span>
+              <span>{t('watchlist.ruleEnabled')}</span>
             </label>
           </div>
 
@@ -499,14 +500,14 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
             className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-500 disabled:opacity-50"
           >
             <Plus className="h-4 w-4" />
-            {creatingRule ? 'Adding...' : 'Add Watchlist Rule'}
+            {creatingRule ? t('watchlist.addingBtn') : t('watchlist.addBtn')}
           </button>
         </form>
 
         {/* Rules List */}
         <div className="space-y-3">
           {rules.length === 0 ? (
-            <p className="py-3 text-sm text-slate-500">No watchlist rules configured yet.</p>
+            <p className="py-3 text-sm text-slate-500">{t('watchlist.empty')}</p>
           ) : (
             rules.map((rule) => {
               const isEditing = editingRuleId === rule.id;
@@ -524,20 +525,21 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                         <span
                           className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${getPriorityBadgeClass(rule.priority)}`}
                         >
-                          {rule.priority}
+                          {labelAlertPriority(rule.priority)}
                         </span>
                         {rule.notifyImmediately && (
                           <span className="rounded border border-indigo-500/30 bg-indigo-500/10 px-2 py-0.5 text-[11px] text-indigo-300">
-                            Immediate Alert
+                            {t('watchlist.immediateTag')}
                           </span>
                         )}
                       </div>
                       <div className="text-xs text-slate-300">
-                        Keywords: <span className="font-mono">{rule.keywords.join(', ')}</span>
+                        {t('watchlist.keywordsPrefix')}{' '}
+                        <span className="font-mono">{rule.keywords.join(', ')}</span>
                       </div>
                       {rule.excludeKeywords.length > 0 && (
                         <div className="text-xs text-slate-400">
-                          Exclude:{' '}
+                          {t('watchlist.excludePrefix')}{' '}
                           <span className="font-mono">{rule.excludeKeywords.join(', ')}</span>
                         </div>
                       )}
@@ -554,7 +556,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                             : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'
                         }`}
                       >
-                        {rule.enabled ? 'Enabled' : 'Disabled'}
+                        {rule.enabled ? t('common.enabled') : t('common.disabled')}
                       </button>
 
                       <button
@@ -566,7 +568,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                         className="inline-flex items-center gap-1 rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
                       >
                         <Edit3 className="h-3.5 w-3.5" />
-                        {isEditing ? 'Cancel' : 'Edit'}
+                        {isEditing ? t('common.cancel') : t('common.edit')}
                       </button>
 
                       <button
@@ -576,7 +578,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                         className="inline-flex items-center gap-1 rounded-lg border border-rose-500/40 bg-rose-500/10 px-2.5 py-1.5 text-xs font-medium text-rose-200 hover:bg-rose-500/20 disabled:opacity-50"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
-                        Delete
+                        {t('common.delete')}
                       </button>
                     </div>
                   </div>
@@ -585,7 +587,9 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                     <div className="space-y-3 rounded-lg border border-slate-800 bg-slate-900/70 p-4">
                       <div className="grid gap-3 sm:grid-cols-2">
                         <label className="block space-y-1 text-xs">
-                          <span className="font-medium text-slate-200">Rule Name</span>
+                          <span className="font-medium text-slate-200">
+                            {t('watchlist.ruleName')}
+                          </span>
                           <input
                             type="text"
                             value={editName}
@@ -594,15 +598,17 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                           />
                         </label>
                         <label className="block space-y-1 text-xs">
-                          <span className="font-medium text-slate-200">Priority</span>
+                          <span className="font-medium text-slate-200">
+                            {t('watchlist.priority')}
+                          </span>
                           <select
                             value={editPriority}
                             onChange={(e) => setEditPriority(e.target.value as AlertPriority)}
                             className="w-full rounded border border-slate-700 bg-slate-950 px-2.5 py-1.5 text-sm text-white"
                           >
-                            {PRIORITY_OPTIONS.map((opt) => (
-                              <option key={opt.value} value={opt.value}>
-                                {opt.label}
+                            {PRIORITY_VALUES.map((val) => (
+                              <option key={val} value={val}>
+                                {labelAlertPriority(val)}
                               </option>
                             ))}
                           </select>
@@ -611,7 +617,9 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
 
                       <div className="grid gap-3 sm:grid-cols-2">
                         <label className="block space-y-1 text-xs">
-                          <span className="font-medium text-slate-200">Keywords</span>
+                          <span className="font-medium text-slate-200">
+                            {t('watchlist.keywordsShort')}
+                          </span>
                           <input
                             type="text"
                             value={editKeywords}
@@ -620,7 +628,9 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                           />
                         </label>
                         <label className="block space-y-1 text-xs">
-                          <span className="font-medium text-slate-200">Exclude Keywords</span>
+                          <span className="font-medium text-slate-200">
+                            {t('watchlist.excludeShort')}
+                          </span>
                           <input
                             type="text"
                             value={editExcludeKeywords}
@@ -638,7 +648,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                             onChange={(e) => setEditNotifyImmediately(e.target.checked)}
                             className="h-4 w-4 rounded border-slate-600 bg-slate-900"
                           />
-                          <span>Notify Immediately</span>
+                          <span>{t('watchlist.notifyImmediately')}</span>
                         </label>
                         <label className="inline-flex items-center gap-2">
                           <input
@@ -647,7 +657,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                             onChange={(e) => setEditEnabled(e.target.checked)}
                             className="h-4 w-4 rounded border-slate-600 bg-slate-900"
                           />
-                          <span>Enabled</span>
+                          <span>{t('common.enabled')}</span>
                         </label>
                       </div>
 
@@ -657,7 +667,7 @@ export function ScheduleWatchlistPanel({ api }: ScheduleWatchlistPanelProps) {
                         onClick={() => void handleSaveRuleEdit(rule.id)}
                         className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
                       >
-                        {savingRule ? 'Saving...' : 'Save Rule'}
+                        {savingRule ? t('common.saving') : t('watchlist.saveRuleBtn')}
                       </button>
                     </div>
                   )}

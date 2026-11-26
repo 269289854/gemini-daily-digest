@@ -4,6 +4,8 @@
 
 import { API_ROUTES, APP_INFO, HTTP_HEADERS, STORAGE_KEYS } from '../constants/routes';
 import type {
+  AiModelsRequest,
+  AiModelsResult,
   AiTestRequest,
   AiTestResult,
   AuthConfigResponse,
@@ -385,6 +387,14 @@ export function createApiClient(config: ApiClientConfig) {
       return request<AiTestResult>({
         method: 'POST',
         path: API_ROUTES.SETTINGS_AI_TEST,
+        body: req ?? {},
+      });
+    },
+
+    listAiModels(req?: AiModelsRequest): Promise<AiModelsResult> {
+      return request<AiModelsResult>({
+        method: 'POST',
+        path: API_ROUTES.SETTINGS_AI_MODELS,
         body: req ?? {},
       });
     },
