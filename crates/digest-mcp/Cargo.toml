@@ -1,0 +1,16 @@
+[package]
+name = "digest-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+async-trait.workspace = true
+digest-core = { path = "../digest-core" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
