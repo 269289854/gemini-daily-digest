@@ -100,13 +100,17 @@ pub const HEADER_ETAG: &str = "etag";
 pub const HEADER_LAST_MODIFIED: &str = "last-modified";
 pub const HEADER_LOCATION: &str = "location";
 
-/// Core API routes.
+/// Core API routes and static SPA serving literals.
 pub const ROUTE_HEALTH: &str = "/health";
+pub const ROUTE_API_ROOT: &str = "/api";
+pub const SUBROUTE_API_V1: &str = "/v1";
 pub const API_PREFIX: &str = "/api/v1";
+pub const SPA_INDEX_FILE: &str = "index.html";
 
 /// Environment variable keys.
 pub const ENV_SERVER_BIND_ADDR: &str = "SERVER_BIND_ADDR";
 pub const ENV_PUBLIC_BASE_URL: &str = "PUBLIC_BASE_URL";
+pub const ENV_STATIC_DIR: &str = "STATIC_DIR";
 pub const ENV_DATABASE_URL: &str = "DATABASE_URL";
 pub const ENV_REDIS_URL: &str = "REDIS_URL";
 pub const ENV_AUTH_MODE: &str = "AUTH_MODE";

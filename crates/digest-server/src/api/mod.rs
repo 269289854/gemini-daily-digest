@@ -10,10 +10,17 @@ pub mod runs;
 pub mod settings;
 pub mod sources;
 
-use axum::routing::{delete, get, post};
+use axum::routing::{any, delete, get, post};
 use axum::{Json, Router};
-use digest_core::constants::{API_PREFIX, HEALTH_STATUS_OK, ROUTE_HEALTH, SERVICE_NAME};
+use digest_core::constants::{
+    API_PREFIX, HEALTH_STATUS_OK, ROUTE_API_ROOT, ROUTE_HEALTH, SERVICE_NAME, SPA_INDEX_FILE,
+    SUBROUTE_API_V1,
+};
+use digest_core::error::CoreError;
 use serde::Serialize;
+use tower_http::services::{ServeDir, ServeFile};
+
+use crate::api::error::{ApiError, RequestId};
 
 use crate::constants::{
     SUBROUTE_AUTH_CONFIG, SUBROUTE_BOOKMARKS, SUBROUTE_BOOKMARK_BY_ITEM, SUBROUTE_DELIVERY_RESEND,
@@ -42,8 +49,17 @@ async fn health_handler() -> Json<HealthResponse> {
     })
 }
 
+async fn api_not_found(req_id: RequestId) -> ApiError {
+    ApiError::new(
+        req_id.0,
+        CoreError::NotFound("API endpoint not found".to_owned()),
+    )
+}
+
 /// Mounts all Section 5 REST and SSE routes onto the Axum router with shared `AppState`.
 pub fn router(state: AppState) -> Router {
+    let static_dir = state.config.core.static_dir.clone();
+
     let api_v1 = Router::new()
         .route(SUBROUTE_AUTH_CONFIG, get(me::auth_config))
         .route(SUBROUTE_ME, get(me::get_me))
@@ -109,12 +125,32 @@ pub fn router(state: AppState) -> Router {
         .route(SUBROUTE_RUNS, get(runs::list_runs))
         .route(SUBROUTE_RUNS_STATS, get(runs::get_run_stats))
         .route(SUBROUTE_DELIVERY_RESEND, post(runs::resend_delivery))
-        .route(SUBROUTE_EVENTS_STREAM, get(events::stream_events));
+        .route(SUBROUTE_EVENTS_STREAM, get(events::stream_events))
+        .route("/", any(api_not_found))
+        .fallback(api_not_found);
 
-    Router::new()
+    let api_root = Router::new()
+        .route("/", any(api_not_found))
+        .nest(SUBROUTE_API_V1, api_v1)
+        .fallback(api_not_found);
+
+    let api_trailing_slash = format!("{ROUTE_API_ROOT}/");
+    let api_v1_trailing_slash = format!("{API_PREFIX}/");
+
+    let base_router = Router::new()
         .route(ROUTE_HEALTH, get(health_handler))
-        .nest(API_PREFIX, api_v1)
-        .with_state(state)
+        .route(&api_trailing_slash, any(api_not_found))
+        .route(&api_v1_trailing_slash, any(api_not_found))
+        .nest(ROUTE_API_ROOT, api_root)
+        .with_state(state);
+
+    match static_dir {
+        Some(dir) => {
+            let spa_index = dir.join(SPA_INDEX_FILE);
+            base_router.fallback_service(ServeDir::new(&dir).fallback(ServeFile::new(spa_index)))
+        }
+        None => base_router,
+    }
 }
 
 #[cfg(test)]
@@ -1529,5 +1565,126 @@ mod tests {
         let chunk = String::from_utf8_lossy(&data);
         assert!(chunk.contains("event: run_progress"));
         assert!(chunk.contains("fetching"));
+    }
+
+    #[tokio::test]
+    async fn static_dir_serves_spa_assets_and_isolates_api_404_and_traversal() {
+        let root = tempfile::tempdir().unwrap();
+        let static_dir = root.path().join("dist");
+        let assets_dir = static_dir.join("assets");
+        std::fs::create_dir_all(&assets_dir).unwrap();
+        std::fs::write(
+            static_dir.join(SPA_INDEX_FILE),
+            "<!doctype html><html><body>SPA_INDEX</body></html>",
+        )
+        .unwrap();
+        std::fs::write(assets_dir.join("app.js"), "console.log('spa-asset');").unwrap();
+        std::fs::write(root.path().join("outside.txt"), "OUTSIDE_SECRET").unwrap();
+
+        let (mut state, _store, _sse) = build_test_state();
+        let mut cfg = (*state.config).clone();
+        cfg.core.static_dir = Some(static_dir);
+        state.config = Arc::new(cfg);
+
+        let app = router(state);
+
+        // 1. Root serves index.html (200)
+        let root_resp = app
+            .clone()
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(root_resp.status(), StatusCode::OK);
+        let root_body =
+            String::from_utf8_lossy(&root_resp.into_body().collect().await.unwrap().to_bytes())
+                .to_string();
+        assert!(root_body.contains("SPA_INDEX"));
+
+        // 2. Static asset serves JS file (200)
+        let asset_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/assets/app.js")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(asset_resp.status(), StatusCode::OK);
+        let asset_body =
+            String::from_utf8_lossy(&asset_resp.into_body().collect().await.unwrap().to_bytes())
+                .to_string();
+        assert!(asset_body.contains("spa-asset"));
+
+        // 3. SPA client-side route falls back to index.html (200)
+        let spa_resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/auth/callback?code=1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(spa_resp.status(), StatusCode::OK);
+        let spa_body =
+            String::from_utf8_lossy(&spa_resp.into_body().collect().await.unwrap().to_bytes())
+                .to_string();
+        assert!(spa_body.contains("SPA_INDEX"));
+
+        // 4. Unmatched /api and /api/v1/* return 404 JSON ErrorEnvelope (never SPA index.html)
+        for missing_api in [
+            "/api",
+            "/api/",
+            "/api/missing",
+            "/api/v1",
+            "/api/v1/",
+            "/api/v1/missing",
+        ] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(missing_api)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                resp.status(),
+                StatusCode::NOT_FOUND,
+                "expected 404 for {missing_api}"
+            );
+            let json = read_json(resp).await;
+            assert_eq!(
+                json["code"],
+                ErrorCode::NotFound.as_str(),
+                "expected NOT_FOUND code for {missing_api}"
+            );
+            assert!(json["requestId"].as_str().is_some_and(|s| !s.is_empty()));
+        }
+
+        // 5. Path traversal never reads files outside STATIC_DIR
+        for traversal in ["/../outside.txt", "/%2e%2e/outside.txt"] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(traversal)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let body_bytes = resp.into_body().collect().await.unwrap().to_bytes();
+            let body_text = String::from_utf8_lossy(&body_bytes);
+            assert!(
+                !body_text.contains("OUTSIDE_SECRET"),
+                "traversal leaked outside file for {traversal}"
+            );
+        }
     }
 }

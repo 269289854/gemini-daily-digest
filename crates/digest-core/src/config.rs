@@ -1,6 +1,7 @@
 //! Typed runtime configuration replacing inline tuning magic numbers.
 
 use std::num::NonZeroUsize;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::constants::{
@@ -19,7 +20,7 @@ use crate::constants::{
     DEFAULT_TOKIO_WORKER_THREADS, DEFAULT_USER_AGENT, DEFAULT_WEBHOOK_TIMEOUT_SECS, ENV_AUTH_MODE,
     ENV_GLOBAL_FETCH_CONCURRENCY, ENV_ITEM_BODY_RETENTION_DAYS, ENV_MAX_FEED_BYTES,
     ENV_OUTBOUND_PROXY_URL, ENV_PG_MAX_CONNECTIONS, ENV_PUBLIC_BASE_URL, ENV_REDIS_URL,
-    ENV_SERVER_BIND_ADDR, ENV_SOURCE_FRESHNESS_TTL_SECS, ENV_SSRF_ALLOWLIST_HOSTS,
+    ENV_SERVER_BIND_ADDR, ENV_SOURCE_FRESHNESS_TTL_SECS, ENV_SSRF_ALLOWLIST_HOSTS, ENV_STATIC_DIR,
     ENV_TOKIO_WORKER_THREADS,
 };
 use crate::domain::AuthMode;
@@ -168,6 +169,7 @@ impl Default for ResourceLimitsTuning {
 pub struct AppConfig {
     pub server_bind_addr: String,
     pub public_base_url: String,
+    pub static_dir: Option<PathBuf>,
     pub auth_mode: AuthMode,
     pub ssrf_allowlist_hosts: Vec<String>,
     pub outbound_proxy_url: Option<String>,
@@ -183,6 +185,7 @@ impl Default for AppConfig {
         Self {
             server_bind_addr: DEFAULT_SERVER_BIND_ADDR.to_owned(),
             public_base_url: DEFAULT_PUBLIC_BASE_URL.to_owned(),
+            static_dir: None,
             auth_mode: AuthMode::DevBypass,
             ssrf_allowlist_hosts: Vec::new(),
             outbound_proxy_url: None,
@@ -263,6 +266,12 @@ impl AppConfig {
                 cfg.public_base_url = public_url;
             }
         }
+        if let Ok(static_raw) = std::env::var(ENV_STATIC_DIR) {
+            let trimmed = static_raw.trim();
+            if !trimmed.is_empty() {
+                cfg.static_dir = Some(PathBuf::from(trimmed));
+            }
+        }
         if let Ok(auth_mode_raw) = std::env::var(ENV_AUTH_MODE) {
             if !auth_mode_raw.trim().is_empty() {
                 cfg.auth_mode = auth_mode_raw.parse()?;
@@ -319,6 +328,7 @@ mod tests {
     fn default_config_values_are_consistent_and_nonzero() {
         let cfg = AppConfig::default();
         assert_eq!(cfg.server_bind_addr, DEFAULT_SERVER_BIND_ADDR);
+        assert!(cfg.static_dir.is_none());
         assert_eq!(cfg.auth_mode, AuthMode::DevBypass);
         assert!(cfg.collector.max_concurrency.get() >= 1);
         assert!(cfg.collector.max_retry_attempts.get() >= 1);

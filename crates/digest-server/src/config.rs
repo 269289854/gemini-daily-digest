@@ -6,7 +6,7 @@ use std::fmt;
 use digest_core::config::AppConfig;
 use digest_core::constants::{
     ENV_APP_MASTER_KEY_B64, ENV_DATABASE_URL, ENV_OIDC_AUDIENCE, ENV_OIDC_CLIENT_ID,
-    ENV_OIDC_ISSUER_URL, SECRET_MASK_REDACTED_PLACEHOLDER,
+    ENV_OIDC_ISSUER_URL, ENV_STATIC_DIR, SECRET_MASK_REDACTED_PLACEHOLDER, SPA_INDEX_FILE,
 };
 use digest_core::crypto::{parse_master_key_b64, EnvelopeCipher};
 use digest_core::domain::AuthMode;
@@ -105,6 +105,22 @@ impl ServerConfig {
             if self.app_master_key_b64.is_none() {
                 return Err(CoreError::InvalidConfig(format!(
                     "{ENV_APP_MASTER_KEY_B64} is required when AUTH_MODE=oidc"
+                )));
+            }
+        }
+
+        if let Some(ref dir) = self.core.static_dir {
+            if !dir.is_dir() {
+                return Err(CoreError::InvalidConfig(format!(
+                    "{ENV_STATIC_DIR} directory does not exist or is not a directory: {}",
+                    dir.display()
+                )));
+            }
+            let index_path = dir.join(SPA_INDEX_FILE);
+            if !index_path.is_file() {
+                return Err(CoreError::InvalidConfig(format!(
+                    "{ENV_STATIC_DIR} must contain {SPA_INDEX_FILE}: {}",
+                    index_path.display()
                 )));
             }
         }
@@ -218,5 +234,21 @@ mod tests {
         let cipher = cfg.build_cipher_or_dev_fallback().unwrap();
         let enc = cipher.encrypt("hello").unwrap();
         assert_eq!(cipher.decrypt(&enc).unwrap(), "hello");
+    }
+
+    #[test]
+    fn static_dir_validation_requires_existing_dir_with_index_html() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("nonexistent");
+
+        let mut cfg = ServerConfig::default();
+        cfg.core.static_dir = Some(missing);
+        assert!(matches!(cfg.validate(), Err(CoreError::InvalidConfig(_))));
+
+        cfg.core.static_dir = Some(dir.path().to_path_buf());
+        assert!(matches!(cfg.validate(), Err(CoreError::InvalidConfig(_))));
+
+        std::fs::write(dir.path().join(SPA_INDEX_FILE), "<!doctype html>").unwrap();
+        assert!(cfg.validate().is_ok());
     }
 }
