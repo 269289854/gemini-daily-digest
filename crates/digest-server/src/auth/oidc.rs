@@ -101,6 +101,12 @@ impl OidcValidator {
             CoreError::InvalidConfig("OIDC audience/client_id is not configured".to_owned())
         })?;
 
+        if token.split('.').count() == 5 {
+            return Err(CoreError::Unauthorized(
+                "encrypted JWT (JWE) is not supported; disable Encryption Key on the OIDC provider and keep only RS256 Signing Key".to_owned(),
+            ));
+        }
+
         let header = jsonwebtoken::decode_header(token)
             .map_err(|_| CoreError::Unauthorized("malformed JWT header".to_owned()))?;
         if header.alg != OIDC_JWT_ALGORITHM {
@@ -565,6 +571,14 @@ mod tests {
             extract_bearer_token(&HeaderMap::new()),
             Err(CoreError::Unauthorized(_))
         ));
+
+        // 6. 5-segment JWE token returns clear actionable guidance
+        let jwe_err = validator
+            .verify_token("eyJhbGciOiJSU0EtT0FFUC0yNTYifQ.enc_key.iv.ciphertext.tag")
+            .await
+            .unwrap_err();
+        assert!(matches!(jwe_err, CoreError::Unauthorized(_)));
+        assert!(jwe_err.to_string().contains("JWE"));
     }
 
     #[tokio::test]

@@ -524,4 +524,169 @@ describe('PlatformBridge, OIDC PKCE helpers, AuthCallbackPage, and AuthProvider'
     expect(loadPkceTransaction().verifier).toBeNull();
     expect(loadPkceTransaction().redirectUri).toBeNull();
   });
+
+  it('completes callback cleanly even when parent re-renders with new onSuccess reference mid-flight', async () => {
+    let resolveTokenExchange: ((value: Response) => void) | null = null;
+    const tokenPromise = new Promise<Response>((resolve) => {
+      resolveTokenExchange = resolve;
+    });
+
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/config')) {
+        return jsonResponse({
+          authMode: AuthMode.OIDC,
+          issuerUrl: 'https://auth.example.com/application/o/digest',
+          clientId: 'client-abc',
+          scopes: ['openid', 'profile', 'email'],
+        });
+      }
+      if (url.endsWith('/.well-known/openid-configuration')) {
+        return jsonResponse({
+          authorization_endpoint: 'https://auth.example.com/authorize',
+          token_endpoint: 'https://auth.example.com/token',
+        });
+      }
+      if (url === 'https://auth.example.com/token') {
+        return tokenPromise;
+      }
+      if (url.endsWith('/api/v1/me')) {
+        return jsonResponse({
+          user: {
+            id: 'u1',
+            oidcSub: 'sub-oidc-1',
+            email: 'user@example.com',
+            displayName: 'Example User',
+            role: 'user',
+            createdAt: '2026-11-26T00:00:00Z',
+            lastLoginAt: null,
+          },
+          onboarding: {
+            hasAiConfig: true,
+            hasSources: true,
+            hasChannels: true,
+            hasSchedule: true,
+          },
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    savePkceTransaction('verifier-rerender', 'state-rerender', APP_ROUTES.DAILY);
+    const firstOnSuccess = vi.fn();
+    const secondOnSuccess = vi.fn();
+
+    const { rerender } = render(
+      <AuthProvider fetchImpl={fetchMock}>
+        <AuthCallbackPage
+          search="?code=code-rr&state=state-rerender"
+          onSuccess={firstOnSuccess}
+          onBackToLogin={vi.fn()}
+        />
+      </AuthProvider>,
+    );
+
+    // Wait until token exchange has started, then simulate parent re-render with a new onSuccess callback.
+    await waitFor(() => {
+      expect(resolveTokenExchange).not.toBeNull();
+    });
+
+    rerender(
+      <AuthProvider fetchImpl={fetchMock}>
+        <AuthCallbackPage
+          search="?code=code-rr&state=state-rerender"
+          onSuccess={secondOnSuccess}
+          onBackToLogin={vi.fn()}
+        />
+      </AuthProvider>,
+    );
+
+    resolveTokenExchange!(
+      jsonResponse({
+        access_token: 'tok-after-rerender',
+        id_token: 'id-after-rerender',
+        expires_in: 3600,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(secondOnSuccess).toHaveBeenCalledWith(APP_ROUTES.DAILY);
+    });
+    expect(firstOnSuccess).not.toHaveBeenCalled();
+  });
+
+  it('surfaces error and stops spinner when callback fails after parent re-render', async () => {
+    let resolveMe: ((value: Response) => void) | null = null;
+    const mePromise = new Promise<Response>((resolve) => {
+      resolveMe = resolve;
+    });
+
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/config')) {
+        return jsonResponse({
+          authMode: AuthMode.OIDC,
+          issuerUrl: 'https://auth.example.com/application/o/digest',
+          clientId: 'client-abc',
+          scopes: ['openid', 'profile', 'email'],
+        });
+      }
+      if (url.endsWith('/.well-known/openid-configuration')) {
+        return jsonResponse({
+          authorization_endpoint: 'https://auth.example.com/authorize',
+          token_endpoint: 'https://auth.example.com/token',
+        });
+      }
+      if (url === 'https://auth.example.com/token') {
+        return jsonResponse({
+          access_token: 'jwe.five.part.token.sample',
+          expires_in: 3600,
+        });
+      }
+      if (url.endsWith('/api/v1/me')) {
+        return mePromise;
+      }
+      return jsonResponse({}, 404);
+    });
+
+    savePkceTransaction('verifier-err', 'state-err', APP_ROUTES.DAILY);
+
+    const { rerender } = render(
+      <AuthProvider fetchImpl={fetchMock}>
+        <AuthCallbackPage
+          search="?code=code-err&state=state-err"
+          onSuccess={vi.fn()}
+          onBackToLogin={vi.fn()}
+        />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(resolveMe).not.toBeNull();
+    });
+
+    rerender(
+      <AuthProvider fetchImpl={fetchMock}>
+        <AuthCallbackPage
+          search="?code=code-err&state=state-err"
+          onSuccess={vi.fn()}
+          onBackToLogin={vi.fn()}
+        />
+      </AuthProvider>,
+    );
+
+    resolveMe!(
+      jsonResponse(
+        {
+          code: 'UNAUTHORIZED',
+          message: 'encrypted JWT (JWE) is not supported',
+        },
+        401,
+      ),
+    );
+
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/JWE/i);
+    expect(screen.queryByText(/Completing Sign-In/i)).toBeNull();
+  });
 });

@@ -13,9 +13,19 @@ export function AuthCallbackPage({ onSuccess, onBackToLogin, search }: AuthCallb
   const [callbackError, setCallbackError] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState<boolean>(true);
   const startedSearchRef = useRef<string | null>(null);
+  const onSuccessRef = useRef(onSuccess);
+  onSuccessRef.current = onSuccess;
+  const mountedRef = useRef<boolean>(true);
 
   const effectiveSearch =
     search ?? (typeof window !== 'undefined' && window.location ? window.location.search : '');
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (startedSearchRef.current === effectiveSearch) {
@@ -23,30 +33,25 @@ export function AuthCallbackPage({ onSuccess, onBackToLogin, search }: AuthCallb
     }
     startedSearchRef.current = effectiveSearch;
 
-    let active = true;
     setIsProcessing(true);
     setCallbackError(null);
 
     void handleCallback(effectiveSearch)
       .then((redirectPath) => {
-        if (!active) {
+        if (!mountedRef.current) {
           return;
         }
         setIsProcessing(false);
-        onSuccess(redirectPath);
+        onSuccessRef.current(redirectPath);
       })
       .catch((err) => {
-        if (!active) {
+        if (!mountedRef.current) {
           return;
         }
         setCallbackError(err instanceof Error ? err.message : 'Authentication callback failed');
         setIsProcessing(false);
       });
-
-    return () => {
-      active = false;
-    };
-  }, [effectiveSearch, handleCallback, onSuccess]);
+  }, [effectiveSearch, handleCallback]);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 py-12 text-slate-100">

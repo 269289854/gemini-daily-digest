@@ -391,11 +391,22 @@ function AppRouter({ bridge, fetchImpl }: AppRouterProps) {
     });
   }, [bridge, navigate]);
 
+  const handleAuthCallbackSuccess = useCallback(
+    (redirectPath: string) => {
+      navigate(redirectPath);
+    },
+    [navigate],
+  );
+
+  const handleAuthBackToLogin = useCallback(() => {
+    navigate(APP_ROUTES.DAILY);
+  }, [navigate]);
+
   if (routeState.route === APP_ROUTES.AUTH_CALLBACK) {
     return (
       <AuthCallbackPage
-        onSuccess={(redirectPath) => navigate(redirectPath)}
-        onBackToLogin={() => navigate(APP_ROUTES.DAILY)}
+        onSuccess={handleAuthCallbackSuccess}
+        onBackToLogin={handleAuthBackToLogin}
       />
     );
   }
