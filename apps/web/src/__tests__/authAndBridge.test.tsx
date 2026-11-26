@@ -12,8 +12,13 @@ import {
   loadPkceTransaction,
   savePkceTransaction,
 } from '../auth/oidc';
-import { APP_ROUTES, STORAGE_KEYS } from '../constants/routes';
-import { WebPlatformBridge, isAllowedExternalUrl } from '../platform/bridge';
+import { APP_ROUTES, DEFAULTS, STORAGE_KEYS } from '../constants/routes';
+import {
+  type PlatformBridge,
+  PlatformRuntime,
+  WebPlatformBridge,
+  isAllowedExternalUrl,
+} from '../platform/bridge';
 import { AuthMode, McpAccessMode } from '../types/enums';
 
 function jsonResponse(body: unknown, status = 200): Response {
@@ -24,7 +29,8 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 function AuthStatusProbe() {
-  const { authConfig, isAuthenticated, isLoading, user, error, login } = useAuth();
+  const { authConfig, isAuthenticated, isLoading, user, error, login, logout, updateServerBaseUrl } =
+    useAuth();
   return (
     <div>
       <span data-testid="loading">{String(isLoading)}</span>
@@ -34,6 +40,12 @@ function AuthStatusProbe() {
       <span data-testid="error">{error ?? 'none'}</span>
       <button type="button" onClick={() => void login().catch(() => {})}>
         Trigger Login
+      </button>
+      <button type="button" onClick={() => logout()}>
+        Trigger Logout
+      </button>
+      <button type="button" onClick={() => updateServerBaseUrl('https://updated.example.com/')}>
+        Update Server URL
       </button>
     </div>
   );
@@ -310,5 +322,206 @@ describe('PlatformBridge, OIDC PKCE helpers, AuthCallbackPage, and AuthProvider'
     expect(screen.getByTestId('authed').textContent).toBe('false');
     expect(screen.getByTestId('mode').textContent).toBe(AuthMode.OIDC);
     expect(screen.getByTestId('email').textContent).toBe('none');
+  });
+
+  it('maintains Desktop OIDC loopback redirectUri parity across authorize and token exchange and syncs session', async () => {
+    const loopbackRedirectUri = 'http://127.0.0.1:49152/callback';
+    let capturedAuthRedirectUri: string | null = null;
+    let capturedTokenBody = '';
+    const syncRuntimeSession = vi.fn().mockResolvedValue(undefined);
+
+    const oidcFetch = vi.fn<typeof fetch>().mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/.well-known/openid-configuration')) {
+        return jsonResponse({
+          authorization_endpoint: 'https://auth.example.com/authorize',
+          token_endpoint: 'https://auth.example.com/token',
+        });
+      }
+      if (url === 'https://auth.example.com/token') {
+        capturedTokenBody = typeof init?.body === 'string' ? init.body : '';
+        return jsonResponse({
+          access_token: 'desktop-access-tok',
+          id_token: 'desktop-id-tok',
+          expires_in: 3600,
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    const apiFetch = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/config')) {
+        return jsonResponse({
+          authMode: AuthMode.OIDC,
+          issuerUrl: 'https://auth.example.com/o/digest',
+          clientId: 'desktop-client-1',
+          scopes: ['openid', 'profile'],
+        });
+      }
+      if (url.endsWith('/api/v1/me')) {
+        return jsonResponse({
+          user: {
+            id: 'u-desk',
+            oidcSub: 'sub-desk',
+            email: 'desktop@example.com',
+            displayName: 'Desktop User',
+            role: 'user',
+            createdAt: '2026-11-26T00:00:00Z',
+            lastLoginAt: null,
+          },
+          onboarding: {
+            hasAiConfig: true,
+            hasSources: true,
+            hasChannels: false,
+            hasSchedule: true,
+          },
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    // Combined fetcher used when fetchImpl is omitted on AuthProvider? Wait: AuthProvider routes OIDC calls
+    // via `fetchImpl ?? activeBridge.oidcFetch ?? globalThis.fetch`. So omit `fetchImpl` and mock globalThis.fetch
+    // for API calls while `bridge.oidcFetch` handles OIDC discovery/token exchange!
+    vi.spyOn(globalThis, 'fetch').mockImplementation(apiFetch);
+
+    const openOidcSystemLogin = vi.fn(async (authorizeUrl: string) => {
+      const parsed = new URL(authorizeUrl);
+      capturedAuthRedirectUri = parsed.searchParams.get('redirect_uri');
+      const state = parsed.searchParams.get('state') ?? '';
+      expect(window.sessionStorage.getItem(STORAGE_KEYS.OIDC_REDIRECT_URI)).toBe(
+        loopbackRedirectUri,
+      );
+      return `http://127.0.0.1:49152/callback?code=loopback-code-1&state=${encodeURIComponent(state)}`;
+    });
+
+    const desktopBridge: PlatformBridge = {
+      runtime: PlatformRuntime.DESKTOP,
+      openExternalUrl: vi.fn().mockResolvedValue(undefined),
+      notify: vi.fn().mockResolvedValue(undefined),
+      copyToClipboard: vi.fn().mockResolvedValue(undefined),
+      getServerBaseUrl: vi.fn().mockReturnValue('https://api.example.com'),
+      setServerBaseUrl: vi.fn().mockImplementation((u: string) => {
+        desktopBridge.getServerBaseUrl = vi.fn().mockReturnValue(u.replace(/\/+$/, ''));
+      }),
+      getMcpConfig: vi.fn().mockReturnValue({
+        mode: McpAccessMode.READ_ONLY,
+        port: DEFAULTS.DEFAULT_MCP_HTTP_PORT,
+      }),
+      setMcpConfig: vi.fn(),
+      prepareOidcLoopback: vi.fn().mockResolvedValue(loopbackRedirectUri),
+      openOidcSystemLogin,
+      oidcFetch,
+      syncRuntimeSession,
+    };
+
+    render(
+      <AuthProvider bridge={desktopBridge}>
+        <AuthStatusProbe />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('loading').textContent).toBe('false');
+    });
+    expect(syncRuntimeSession).toHaveBeenCalledWith({
+      serverBaseUrl: 'https://api.example.com',
+      accessToken: null,
+      authMode: AuthMode.OIDC,
+    });
+
+    screen.getByRole('button', { name: /Trigger Login/i }).click();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('authed').textContent).toBe('true');
+    });
+
+    expect(desktopBridge.prepareOidcLoopback).toHaveBeenCalledTimes(1);
+    expect(capturedAuthRedirectUri).toBe(loopbackRedirectUri);
+    const tokenParams = new URLSearchParams(capturedTokenBody);
+    expect(tokenParams.get('redirect_uri')).toBe(loopbackRedirectUri);
+    // 1) discovery in login(), 2) discovery in handleCallback(), 3) token exchange in handleCallback()
+    expect(oidcFetch).toHaveBeenCalledTimes(3);
+    expect(screen.getByTestId('email').textContent).toBe('desktop@example.com');
+    expect(loadPkceTransaction().redirectUri).toBeNull();
+    expect(syncRuntimeSession).toHaveBeenLastCalledWith({
+      serverBaseUrl: 'https://api.example.com',
+      accessToken: 'desktop-access-tok',
+      authMode: AuthMode.OIDC,
+    });
+
+    // Logout & updateServerBaseUrl also sync runtime session
+    screen.getByRole('button', { name: /Trigger Logout/i }).click();
+    expect(syncRuntimeSession).toHaveBeenLastCalledWith({
+      serverBaseUrl: 'https://api.example.com',
+      accessToken: null,
+      authMode: AuthMode.OIDC,
+    });
+
+    screen.getByRole('button', { name: /Update Server URL/i }).click();
+    await waitFor(() => {
+      expect(syncRuntimeSession).toHaveBeenCalledWith({
+        serverBaseUrl: 'https://updated.example.com',
+        accessToken: null,
+        authMode: AuthMode.OIDC,
+      });
+    });
+  });
+
+  it('surfaces an explicit error when Desktop openOidcSystemLogin returns empty callback search', async () => {
+    const desktopBridge: PlatformBridge = {
+      runtime: PlatformRuntime.DESKTOP,
+      openExternalUrl: vi.fn().mockResolvedValue(undefined),
+      notify: vi.fn().mockResolvedValue(undefined),
+      copyToClipboard: vi.fn().mockResolvedValue(undefined),
+      getServerBaseUrl: vi.fn().mockReturnValue('https://api.example.com'),
+      setServerBaseUrl: vi.fn(),
+      getMcpConfig: vi.fn().mockReturnValue({
+        mode: McpAccessMode.READ_ONLY,
+        port: DEFAULTS.DEFAULT_MCP_HTTP_PORT,
+      }),
+      setMcpConfig: vi.fn(),
+      prepareOidcLoopback: vi.fn().mockResolvedValue('http://127.0.0.1:50001/callback'),
+      openOidcSystemLogin: vi.fn().mockResolvedValue(''),
+    };
+
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/config')) {
+        return jsonResponse({
+          authMode: AuthMode.OIDC,
+          issuerUrl: 'https://auth.example.com/o/digest',
+          clientId: 'desktop-client-1',
+          scopes: ['openid'],
+        });
+      }
+      if (url.endsWith('/.well-known/openid-configuration')) {
+        return jsonResponse({
+          authorization_endpoint: 'https://auth.example.com/authorize',
+          token_endpoint: 'https://auth.example.com/token',
+        });
+      }
+      return jsonResponse({}, 404);
+    });
+
+    render(
+      <AuthProvider bridge={desktopBridge} fetchImpl={fetchMock}>
+        <AuthStatusProbe />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('loading').textContent).toBe('false');
+    });
+
+    screen.getByRole('button', { name: /Trigger Login/i }).click();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('error').textContent).toMatch(/cancelled|empty/i);
+    });
+    expect(screen.getByTestId('authed').textContent).toBe('false');
+    expect(loadPkceTransaction().verifier).toBeNull();
+    expect(loadPkceTransaction().redirectUri).toBeNull();
   });
 });

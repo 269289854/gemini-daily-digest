@@ -44,6 +44,7 @@ export interface PkceTransaction {
   verifier: string | null;
   state: string | null;
   postLoginRedirect: string | null;
+  redirectUri?: string | null;
 }
 
 function bytesToBase64Url(bytes: Uint8Array): string {
@@ -350,6 +351,7 @@ export function savePkceTransaction(
   verifier: string,
   state: string,
   postLoginRedirect?: string,
+  redirectUri?: string,
 ): void {
   setStorageValue(true, STORAGE_KEYS.PKCE_VERIFIER, verifier);
   setStorageValue(true, STORAGE_KEYS.OIDC_STATE, state);
@@ -358,6 +360,11 @@ export function savePkceTransaction(
   } else {
     removeStorageValue(STORAGE_KEYS.POST_LOGIN_REDIRECT);
   }
+  if (redirectUri) {
+    setStorageValue(true, STORAGE_KEYS.OIDC_REDIRECT_URI, redirectUri);
+  } else {
+    removeStorageValue(STORAGE_KEYS.OIDC_REDIRECT_URI);
+  }
 }
 
 export function loadPkceTransaction(): PkceTransaction {
@@ -365,6 +372,7 @@ export function loadPkceTransaction(): PkceTransaction {
     verifier: getStorageValue(true, STORAGE_KEYS.PKCE_VERIFIER),
     state: getStorageValue(true, STORAGE_KEYS.OIDC_STATE),
     postLoginRedirect: getStorageValue(true, STORAGE_KEYS.POST_LOGIN_REDIRECT),
+    redirectUri: getStorageValue(true, STORAGE_KEYS.OIDC_REDIRECT_URI),
   };
 }
 
@@ -372,6 +380,7 @@ export function clearPkceTransaction(): void {
   removeStorageValue(STORAGE_KEYS.PKCE_VERIFIER);
   removeStorageValue(STORAGE_KEYS.OIDC_STATE);
   removeStorageValue(STORAGE_KEYS.POST_LOGIN_REDIRECT);
+  removeStorageValue(STORAGE_KEYS.OIDC_REDIRECT_URI);
 }
 
 export function saveAuthSession(session: {

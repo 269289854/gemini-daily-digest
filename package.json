@@ -6,6 +6,8 @@
     "web:dev": "pnpm --dir apps/web run dev",
     "web:typecheck": "pnpm --dir apps/web run typecheck",
     "web:test": "pnpm --dir apps/web run test -- --run",
-    "web:build": "pnpm --dir apps/web run build"
+    "web:build": "pnpm --dir apps/web run build",
+    "desktop:dev": "pnpm --dir apps/desktop run dev",
+    "desktop:build": "pnpm --dir apps/desktop run build"
   }
 }

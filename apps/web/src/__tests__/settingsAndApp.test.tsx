@@ -638,4 +638,129 @@ describe('SettingsPage, all 5 Settings Panels, and App Integration', () => {
     expect(await screen.findByText('MCP Client Config Snippets')).toBeInTheDocument();
     expect(window.location.search).toContain('tab=mcp');
   });
+
+  it('DesktopMcpPanel displays desktop bridge status, copies local token without rendering it, and rotates token', async () => {
+    const desktopBridge = createMockBridge({
+      runtime: PlatformRuntime.DESKTOP,
+      getMcpBridgeStatus: vi.fn().mockResolvedValue({
+        running: true,
+        endpointUrl: 'http://127.0.0.1:8765/mcp',
+        bindHost: '127.0.0.1',
+        port: 8765,
+        mode: McpAccessMode.READ_ONLY,
+        tokenHint: '****9f2a',
+        lastError: null,
+      }),
+      getMcpLocalToken: vi.fn().mockResolvedValue('local-mcp-secret-token-value'),
+      rotateMcpToken: vi.fn().mockResolvedValue({
+        running: true,
+        endpointUrl: 'http://127.0.0.1:8765/mcp',
+        bindHost: '127.0.0.1',
+        port: 8765,
+        mode: McpAccessMode.READ_ONLY,
+        tokenHint: '****b81c',
+        lastError: null,
+      }),
+    });
+
+    const { container } = render(
+      <DesktopMcpPanel
+        bridge={desktopBridge}
+        serverBaseUrl="https://digest.example.com"
+        onServerBaseUrlChange={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText('Desktop Bridge Status')).toBeInTheDocument();
+    expect(screen.getByText('Running')).toBeInTheDocument();
+    expect(screen.getByText('http://127.0.0.1:8765/mcp')).toBeInTheDocument();
+    expect(screen.getByText('****9f2a')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Copy Local Token/i }));
+    await waitFor(() => {
+      expect(desktopBridge.getMcpLocalToken).toHaveBeenCalledTimes(1);
+      expect(desktopBridge.copyToClipboard).toHaveBeenCalledWith('local-mcp-secret-token-value');
+    });
+    expect(await screen.findByText(/Copied local MCP Bearer token/i)).toBeInTheDocument();
+    expect(container.textContent).not.toContain('local-mcp-secret-token-value');
+
+    fireEvent.click(screen.getByRole('button', { name: /Rotate Token/i }));
+    await waitFor(() => {
+      expect(desktopBridge.rotateMcpToken).toHaveBeenCalledTimes(1);
+    });
+    expect(await screen.findByText('****b81c')).toBeInTheDocument();
+  });
+
+  it('App triggers native desktop notification on digest_ready SSE event in DESKTOP runtime', async () => {
+    const encoder = new TextEncoder();
+    const sseBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: digest_ready\ndata: {"digestId":"d-1","digestDate":"2026-11-26","title":"Gemini Daily Briefing","itemCount":7,"highlightedCount":2,"degradedFallback":false}\n\n',
+          ),
+        );
+      },
+    });
+
+    const desktopBridge = createMockBridge({
+      runtime: PlatformRuntime.DESKTOP,
+    });
+
+    const devFetch = vi.fn<typeof fetch>().mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/api/v1/auth/config')) {
+        return jsonResponse({
+          authMode: AuthMode.DEV_BYPASS,
+          issuerUrl: null,
+          clientId: null,
+          scopes: [],
+        });
+      }
+      if (url.endsWith('/api/v1/me')) {
+        return jsonResponse({
+          user: {
+            id: 'u-dev',
+            oidcSub: 'dev-bypass',
+            email: 'dev@example.com',
+            displayName: 'Dev User',
+            role: 'admin',
+            createdAt: '2026-11-26T00:00:00Z',
+            lastLoginAt: null,
+          },
+          onboarding: {
+            hasAiConfig: true,
+            hasSources: true,
+            hasChannels: true,
+            hasSchedule: true,
+          },
+        });
+      }
+      if (url.endsWith('/api/v1/events/stream')) {
+        return new Response(sseBody, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      if (url.includes('/api/v1/digests?')) {
+        return jsonResponse({ items: [], page: 1, pageSize: 20, total: 0, totalPages: 0 });
+      }
+      if (url.includes('/api/v1/digests/')) {
+        return jsonResponse(
+          { code: 'NOT_FOUND', message: 'Not found', requestId: 'req-1' },
+          404,
+        );
+      }
+      return jsonResponse({});
+    });
+
+    render(<App bridge={desktopBridge} fetchImpl={devFetch} />);
+
+    await waitFor(() => {
+      expect(desktopBridge.notify).toHaveBeenCalledWith(
+        'Daily Digest Ready',
+        'Gemini Daily Briefing (7 items)',
+      );
+    });
+  });
 });

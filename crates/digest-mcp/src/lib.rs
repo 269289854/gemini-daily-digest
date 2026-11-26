@@ -1,10 +1,18 @@
 //! Model Context Protocol (MCP) server & Command + Capability Guard dispatcher.
 //!
 //! Designed so external AI agents (Gemini CLI, Antigravity, ChatGPT, Claude,
-//! Codex) can query digests or invoke desktop controls safely without ever
-//! accessing decrypted credentials.
+//! Codex) and the Tauri 2 Desktop app can query digests or invoke desktop controls
+//! safely without ever accessing decrypted credentials.
 
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 #![cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
+
+pub mod client;
+pub mod config;
+pub mod desktop;
+pub mod redact;
+pub mod tools;
+pub mod transport;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -13,6 +21,8 @@ use async_trait::async_trait;
 use digest_core::domain::{McpAccessMode, McpToolName};
 use digest_core::error::CoreError;
 use serde_json::Value;
+
+use crate::redact::sanitize_mcp_output;
 
 /// Command trait implemented by each MCP tool.
 #[async_trait]
@@ -27,7 +37,7 @@ pub trait McpToolHandler: Send + Sync {
     async fn execute(&self, args: Value) -> Result<Value, CoreError>;
 }
 
-/// Central MCP tool registry enforcing `McpAccessMode` before execution.
+/// Central MCP tool registry enforcing `McpAccessMode` and redaction before/after execution.
 #[derive(Default)]
 pub struct McpDispatcher {
     handlers: HashMap<McpToolName, Arc<dyn McpToolHandler>>,
@@ -39,7 +49,14 @@ impl McpDispatcher {
         self.handlers.insert(handler.name(), handler);
     }
 
-    /// Dispatches a tool call only if `granted_mode` satisfies the tool's guard.
+    /// Returns the number of registered tool handlers.
+    #[must_use]
+    pub fn handler_count(&self) -> usize {
+        self.handlers.len()
+    }
+
+    /// Dispatches a tool call only if `granted_mode` satisfies the tool's guard,
+    /// then runs defense-in-depth output sanitization.
     pub async fn dispatch(
         &self,
         granted_mode: McpAccessMode,
@@ -58,7 +75,8 @@ impl McpDispatcher {
             )));
         }
 
-        handler.execute(args).await
+        let output = handler.execute(args).await?;
+        Ok(sanitize_mcp_output(output))
     }
 }
 

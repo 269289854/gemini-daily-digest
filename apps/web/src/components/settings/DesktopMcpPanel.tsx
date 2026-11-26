@@ -1,8 +1,17 @@
-import { type FormEvent, useEffect, useState } from 'react';
-import { Check, CheckCircle2, Copy, Globe, ServerCog, XCircle } from 'lucide-react';
+import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import {
+  Check,
+  CheckCircle2,
+  Copy,
+  Globe,
+  KeyRound,
+  RefreshCw,
+  ServerCog,
+  XCircle,
+} from 'lucide-react';
 import { normalizeBaseUrl } from '../../api/client';
 import { DEFAULTS, MCP_CLIENT_TARGETS, type McpClientTarget } from '../../constants/routes';
-import type { PlatformBridge } from '../../platform/bridge';
+import { type McpBridgeStatus, type PlatformBridge, PlatformRuntime } from '../../platform/bridge';
 import { McpAccessMode } from '../../types/enums';
 
 export interface DesktopMcpPanelProps {
@@ -174,10 +183,16 @@ export function DesktopMcpPanel({
   onServerBaseUrlChange,
 }: DesktopMcpPanelProps) {
   const initialMcp = bridge.getMcpConfig();
+  const isDesktopBridgeAvailable =
+    bridge.runtime === PlatformRuntime.DESKTOP && typeof bridge.getMcpBridgeStatus === 'function';
 
   const [draftBaseUrl, setDraftBaseUrl] = useState<string>(serverBaseUrl);
   const [mcpMode, setMcpMode] = useState<McpAccessMode>(initialMcp.mode);
   const [mcpPortInput, setMcpPortInput] = useState<string>(String(initialMcp.port));
+
+  const [bridgeStatus, setBridgeStatus] = useState<McpBridgeStatus | null>(null);
+  const [bridgeLoading, setBridgeLoading] = useState<boolean>(false);
+  const [bridgeBusy, setBridgeBusy] = useState<boolean>(false);
 
   const [error, setError] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
@@ -186,6 +201,51 @@ export function DesktopMcpPanel({
   useEffect(() => {
     setDraftBaseUrl(serverBaseUrl);
   }, [serverBaseUrl]);
+
+  const refreshBridgeStatus = useCallback(async () => {
+    if (!isDesktopBridgeAvailable || !bridge.getMcpBridgeStatus) {
+      return;
+    }
+    setBridgeLoading(true);
+    try {
+      const nextStatus = await bridge.getMcpBridgeStatus();
+      setBridgeStatus(nextStatus);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch Desktop MCP bridge status');
+    } finally {
+      setBridgeLoading(false);
+    }
+  }, [bridge, isDesktopBridgeAvailable]);
+
+  useEffect(() => {
+    if (!isDesktopBridgeAvailable) {
+      setBridgeStatus(null);
+      return;
+    }
+    let cancelled = false;
+    setBridgeLoading(true);
+    void bridge
+      .getMcpBridgeStatus?.()
+      .then((nextStatus) => {
+        if (!cancelled) {
+          setBridgeStatus(nextStatus);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Failed to fetch Desktop MCP bridge status');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setBridgeLoading(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge, isDesktopBridgeAvailable]);
 
   const parsedPort = sanitizePort(Number.parseInt(mcpPortInput, 10));
 
@@ -203,6 +263,9 @@ export function DesktopMcpPanel({
           ? `Server Base URL saved (${normalized}).`
           : 'Server Base URL reset to same-origin relative mode.',
       );
+      if (isDesktopBridgeAvailable) {
+        void refreshBridgeStatus();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Invalid server base URL');
     }
@@ -221,6 +284,45 @@ export function DesktopMcpPanel({
 
     bridge.setMcpConfig(mcpMode, numPort);
     setStatusMessage(`Desktop MCP settings saved (${mcpMode} on port ${numPort}).`);
+    if (isDesktopBridgeAvailable) {
+      void refreshBridgeStatus();
+    }
+  };
+
+  const handleCopyLocalToken = async () => {
+    if (!bridge.getMcpLocalToken) {
+      return;
+    }
+    setError(null);
+    setStatusMessage(null);
+    setBridgeBusy(true);
+    try {
+      const rawToken = await bridge.getMcpLocalToken();
+      await bridge.copyToClipboard(rawToken);
+      setStatusMessage('Copied local MCP Bearer token to clipboard.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to copy local MCP token');
+    } finally {
+      setBridgeBusy(false);
+    }
+  };
+
+  const handleRotateLocalToken = async () => {
+    if (!bridge.rotateMcpToken) {
+      return;
+    }
+    setError(null);
+    setStatusMessage(null);
+    setBridgeBusy(true);
+    try {
+      const updatedStatus = await bridge.rotateMcpToken();
+      setBridgeStatus(updatedStatus);
+      setStatusMessage('Rotated local MCP Bearer token.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to rotate local MCP token');
+    } finally {
+      setBridgeBusy(false);
+    }
   };
 
   const handleCopySnippet = async (target: McpClientTarget, snippet: string) => {
@@ -345,6 +447,93 @@ export function DesktopMcpPanel({
             Save MCP Settings
           </button>
         </form>
+
+        {isDesktopBridgeAvailable && (
+          <div className="mt-4 space-y-3 rounded-lg border border-slate-800 bg-slate-950/70 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-300">
+                  Desktop Bridge Status
+                </span>
+                {bridgeStatus && (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                      bridgeStatus.running
+                        ? 'border border-emerald-500/40 bg-emerald-500/15 text-emerald-300'
+                        : 'border border-amber-500/40 bg-amber-500/15 text-amber-300'
+                    }`}
+                  >
+                    {bridgeStatus.running ? 'Running' : 'Stopped'}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {bridge.getMcpLocalToken && (
+                  <button
+                    type="button"
+                    disabled={bridgeBusy}
+                    onClick={() => void handleCopyLocalToken()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <KeyRound className="h-3.5 w-3.5 text-cyan-400" />
+                    Copy Local Token
+                  </button>
+                )}
+                {bridge.rotateMcpToken && (
+                  <button
+                    type="button"
+                    disabled={bridgeBusy}
+                    onClick={() => void handleRotateLocalToken()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-100 transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5 text-amber-400" />
+                    Rotate Token
+                  </button>
+                )}
+                <button
+                  type="button"
+                  disabled={bridgeLoading || bridgeBusy}
+                  onClick={() => void refreshBridgeStatus()}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-300 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${bridgeLoading ? 'animate-spin' : ''}`} />
+                  Refresh
+                </button>
+              </div>
+            </div>
+
+            {bridgeStatus ? (
+              <div className="grid gap-2 text-xs text-slate-300 sm:grid-cols-3">
+                <div>
+                  <span className="text-slate-500">Endpoint: </span>
+                  <span className="font-mono text-slate-200">{bridgeStatus.endpointUrl}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">Mode: </span>
+                  <span className="font-mono text-slate-200">{bridgeStatus.mode}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">Token Hint: </span>
+                  <span className="font-mono text-slate-200">{bridgeStatus.tokenHint}</span>
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">
+                {bridgeLoading ? 'Loading Desktop MCP bridge status...' : 'Bridge status unavailable.'}
+              </p>
+            )}
+
+            {bridgeStatus?.lastError && (
+              <div
+                role="alert"
+                className="rounded-md border border-rose-500/40 bg-rose-950/40 px-3 py-2 text-xs text-rose-200"
+              >
+                {bridgeStatus.lastError}
+              </div>
+            )}
+          </div>
+        )}
       </section>
 
       {/* One-Click Client Snippets */}

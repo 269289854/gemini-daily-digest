@@ -128,6 +128,12 @@ function AuthenticatedShell({
     fetchImpl,
     onDigestReady: (event) => {
       setLatestDigestReady(event);
+      if (bridge.runtime === PlatformRuntime.DESKTOP) {
+        const body = event.title
+          ? `${event.title} (${event.itemCount} items)`
+          : `${event.digestDate} (${event.itemCount} items)`;
+        void bridge.notify('Daily Digest Ready', body);
+      }
     },
     onAlertTriggered: (event) => {
       if (event.count > 0) {

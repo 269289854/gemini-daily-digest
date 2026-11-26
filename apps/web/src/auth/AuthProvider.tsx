@@ -1,7 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, type ApiClient, createApiClient } from '../api/client';
 import { APP_ROUTES, DEFAULTS } from '../constants/routes';
-import { type PlatformBridge, PlatformRuntime, createPlatformBridge } from '../platform/bridge';
+import {
+  type PlatformBridge,
+  PlatformRuntime,
+  createPlatformBridge,
+  extractOidcCallbackSearch,
+} from '../platform/bridge';
 import type { AuthConfigResponse, OnboardingFlags, UserRecord } from '../types/api';
 import { AuthMode } from '../types/enums';
 import {
@@ -32,7 +37,7 @@ export interface AuthContextValue {
   api: ApiClient;
   login: () => Promise<void>;
   logout: () => void;
-  handleCallback: (search: string) => Promise<string>;
+  handleCallback: (search: string, redirectUriOverride?: string) => Promise<string>;
   refreshMe: () => Promise<void>;
   updateServerBaseUrl: (url: string) => void;
 }
@@ -70,24 +75,12 @@ function sanitizePostLoginRedirect(path: string | null): string {
   return path;
 }
 
-function extractCallbackSearch(rawResult: string): string {
-  const trimmed = rawResult.trim();
-  if (!trimmed) {
-    return '';
-  }
-  if (trimmed.startsWith('?')) {
-    return trimmed;
-  }
-  try {
-    const parsed = new URL(trimmed);
-    return parsed.search;
-  } catch {
-    return trimmed.includes('code=') || trimmed.includes('error=') ? `?${trimmed}` : '';
-  }
-}
-
 export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps) {
   const activeBridge = useMemo(() => bridge ?? createPlatformBridge(), [bridge]);
+  const effectiveOidcFetch = useMemo(
+    () => fetchImpl ?? activeBridge.oidcFetch ?? globalThis.fetch,
+    [activeBridge, fetchImpl],
+  );
 
   const initialSession = useMemo(() => {
     const stored = loadAuthSession();
@@ -124,6 +117,24 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
 
   const inFlightCallbackRef = useRef<{ search: string; promise: Promise<string> } | null>(null);
 
+  const syncDesktopSession = useCallback(
+    (nextServerBaseUrl: string, nextAccessToken: string | null, nextAuthMode: AuthMode | null) => {
+      if (!activeBridge.syncRuntimeSession) {
+        return;
+      }
+      void activeBridge
+        .syncRuntimeSession({
+          serverBaseUrl: nextServerBaseUrl,
+          accessToken: nextAccessToken,
+          authMode: nextAuthMode,
+        })
+        .catch(() => {
+          // Ignore desktop runtime sync failures in non-desktop or transient startup states.
+        });
+    },
+    [activeBridge],
+  );
+
   const handleUnauthorized = useCallback(() => {
     clearAuthSession();
     accessTokenRef.current = null;
@@ -131,7 +142,8 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     setUser(null);
     setOnboarding(null);
     setIsAuthenticated(false);
-  }, []);
+    syncDesktopSession(serverBaseUrlRef.current, null, authConfigRef.current?.authMode ?? null);
+  }, [syncDesktopSession]);
 
   const api = useMemo(
     () =>
@@ -174,6 +186,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
           setUser(me.user);
           setOnboarding(me.onboarding);
           setIsAuthenticated(true);
+          syncDesktopSession(serverBaseUrlRef.current, null, config.authMode);
           setIsLoading(false);
           return;
         }
@@ -193,6 +206,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
           setUser(null);
           setOnboarding(null);
           setIsAuthenticated(false);
+          syncDesktopSession(serverBaseUrlRef.current, null, config.authMode);
           setIsLoading(false);
           return;
         }
@@ -206,6 +220,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         setUser(me.user);
         setOnboarding(me.onboarding);
         setIsAuthenticated(true);
+        syncDesktopSession(serverBaseUrlRef.current, currentSession.accessToken, config.authMode);
       } catch (err) {
         if (cancelled) {
           return;
@@ -216,6 +231,11 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         } else {
           setIsAuthenticated(false);
           setError(err instanceof Error ? err.message : 'Failed to initialize authentication');
+          syncDesktopSession(
+            serverBaseUrlRef.current,
+            accessTokenRef.current,
+            authConfigRef.current?.authMode ?? null,
+          );
         }
       } finally {
         if (!cancelled) {
@@ -229,11 +249,12 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     return () => {
       cancelled = true;
     };
-  }, [api, initGeneration, serverBaseUrl]);
+  }, [api, initGeneration, serverBaseUrl, syncDesktopSession]);
 
   const handleCallback = useCallback(
-    async (search: string): Promise<string> => {
-      if (inFlightCallbackRef.current && inFlightCallbackRef.current.search === search) {
+    async (search: string, redirectUriOverride?: string): Promise<string> => {
+      const flightKey = `${search}::${redirectUriOverride ?? ''}`;
+      if (inFlightCallbackRef.current && inFlightCallbackRef.current.search === flightKey) {
         return inFlightCallbackRef.current.promise;
       }
 
@@ -251,9 +272,14 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
 
         const code = params.get('code')?.trim() ?? '';
         const returnedState = params.get('state')?.trim() ?? '';
-        const { verifier, state: storedState, postLoginRedirect } = loadPkceTransaction();
+        const {
+          verifier,
+          state: storedState,
+          postLoginRedirect,
+          redirectUri: storedRedirectUri,
+        } = loadPkceTransaction();
 
-        // Clear PKCE verifier and state immediately after reading/validation.
+        // Clear PKCE verifier, state, and redirect URI immediately after reading/validation.
         clearPkceTransaction();
 
         if (!code || !returnedState) {
@@ -278,16 +304,18 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
           throw new Error(msg);
         }
 
-        const endpoints = await discoverOidcEndpoints(config.issuerUrl, fetchImpl);
+        const effectiveRedirectUri =
+          redirectUriOverride ?? storedRedirectUri ?? getWebRedirectUri();
+        const endpoints = await discoverOidcEndpoints(config.issuerUrl, effectiveOidcFetch);
         const tokenRes = await exchangeCodeForToken(
           {
             tokenEndpoint: endpoints.tokenEndpoint,
             clientId: config.clientId,
             code,
-            redirectUri: getWebRedirectUri(),
+            redirectUri: effectiveRedirectUri,
             codeVerifier: verifier,
           },
-          fetchImpl,
+          effectiveOidcFetch,
         );
 
         const saved = saveAuthSession({
@@ -304,11 +332,12 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         setOnboarding(me.onboarding);
         setIsAuthenticated(true);
         setError(null);
+        syncDesktopSession(serverBaseUrlRef.current, saved.accessToken, config.authMode);
 
         return sanitizePostLoginRedirect(postLoginRedirect);
       })();
 
-      inFlightCallbackRef.current = { search, promise };
+      inFlightCallbackRef.current = { search: flightKey, promise };
       try {
         return await promise;
       } finally {
@@ -317,7 +346,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         }
       }
     },
-    [api, fetchImpl],
+    [api, effectiveOidcFetch, syncDesktopSession],
   );
 
   const login = useCallback(async (): Promise<void> => {
@@ -329,6 +358,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
 
       if (config.authMode === AuthMode.DEV_BYPASS) {
         await refreshMe();
+        syncDesktopSession(serverBaseUrlRef.current, accessTokenRef.current, config.authMode);
         return;
       }
 
@@ -336,28 +366,37 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
         throw new Error('OIDC configuration is incomplete (missing issuerUrl or clientId)');
       }
 
-      const endpoints = await discoverOidcEndpoints(config.issuerUrl, fetchImpl);
+      const endpoints = await discoverOidcEndpoints(config.issuerUrl, effectiveOidcFetch);
       const verifier = generateCodeVerifier();
       const state = generateOidcState();
       const codeChallenge = await computeCodeChallengeS256(verifier);
 
-      savePkceTransaction(verifier, state, getCurrentRedirectTarget());
+      const useDesktopLoopback =
+        activeBridge.runtime === PlatformRuntime.DESKTOP &&
+        Boolean(activeBridge.openOidcSystemLogin);
+      const redirectUri =
+        useDesktopLoopback && activeBridge.prepareOidcLoopback
+          ? await activeBridge.prepareOidcLoopback()
+          : getWebRedirectUri();
+
+      savePkceTransaction(verifier, state, getCurrentRedirectTarget(), redirectUri);
 
       const authorizeUrl = buildAuthorizeUrl({
         authorizationEndpoint: endpoints.authorizationEndpoint,
         clientId: config.clientId,
-        redirectUri: getWebRedirectUri(),
+        redirectUri,
         scopes: config.scopes?.length ? config.scopes : DEFAULTS.DEFAULT_OIDC_SCOPES,
         state,
         codeChallenge,
       });
 
-      if (activeBridge.runtime === PlatformRuntime.DESKTOP && activeBridge.openOidcSystemLogin) {
+      if (useDesktopLoopback && activeBridge.openOidcSystemLogin) {
         const callbackPayload = await activeBridge.openOidcSystemLogin(authorizeUrl);
-        const callbackSearch = extractCallbackSearch(callbackPayload);
-        if (callbackSearch) {
-          await handleCallback(callbackSearch);
+        const callbackSearch = extractOidcCallbackSearch(callbackPayload);
+        if (!callbackSearch) {
+          throw new Error('OIDC login was cancelled or returned an empty authorization callback');
         }
+        await handleCallback(callbackSearch, redirectUri);
         return;
       }
 
@@ -370,7 +409,7 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
       setError(message);
       throw err;
     }
-  }, [activeBridge, api, fetchImpl, handleCallback, refreshMe]);
+  }, [activeBridge, api, effectiveOidcFetch, handleCallback, refreshMe, syncDesktopSession]);
 
   const logout = useCallback(() => {
     clearAuthSession();
@@ -381,7 +420,8 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
     setOnboarding(null);
     setIsAuthenticated(false);
     setError(null);
-  }, []);
+    syncDesktopSession(serverBaseUrlRef.current, null, authConfigRef.current?.authMode ?? null);
+  }, [syncDesktopSession]);
 
   const updateServerBaseUrl = useCallback(
     (url: string) => {
@@ -390,9 +430,10 @@ export function AuthProvider({ bridge, fetchImpl, children }: AuthProviderProps)
       serverBaseUrlRef.current = normalized;
       setServerBaseUrl(normalized);
       setError(null);
+      syncDesktopSession(normalized, accessTokenRef.current, authConfigRef.current?.authMode ?? null);
       setInitGeneration((prev) => prev + 1);
     },
-    [activeBridge],
+    [activeBridge, syncDesktopSession],
   );
 
   const value = useMemo<AuthContextValue>(

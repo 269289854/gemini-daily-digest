@@ -51,6 +51,7 @@ export const STORAGE_KEYS = {
   SERVER_BASE_URL: 'gemini_digest.server_base_url',
   PKCE_VERIFIER: 'gemini_digest.pkce_verifier',
   OIDC_STATE: 'gemini_digest.oidc_state',
+  OIDC_REDIRECT_URI: 'gemini_digest.oidc_redirect_uri',
   ACCESS_TOKEN: 'gemini_digest.access_token',
   ID_TOKEN: 'gemini_digest.id_token',
   TOKEN_EXPIRES_AT: 'gemini_digest.token_expires_at',
@@ -58,6 +59,22 @@ export const STORAGE_KEYS = {
   MCP_ACCESS_MODE: 'gemini_digest.mcp_access_mode',
   MCP_PORT: 'gemini_digest.mcp_port',
   ACTIVE_DIGEST_DATE: 'gemini_digest.active_digest_date',
+} as const;
+
+export const TAURI_COMMANDS = {
+  PREPARE_OIDC_LOOPBACK: 'prepare_oidc_loopback',
+  OPEN_OIDC_SYSTEM_LOGIN: 'open_oidc_system_login',
+  OIDC_HTTP_REQUEST: 'oidc_http_request',
+  OPEN_EXTERNAL_URL: 'open_external_url',
+  SEND_NATIVE_NOTIFICATION: 'send_native_notification',
+  SYNC_DESKTOP_RUNTIME_CONFIG: 'sync_desktop_runtime_config',
+  GET_MCP_BRIDGE_STATUS: 'get_mcp_bridge_status',
+  GET_MCP_LOCAL_TOKEN: 'get_mcp_local_token',
+  ROTATE_MCP_TOKEN: 'rotate_mcp_token',
+} as const;
+
+export const TAURI_EVENTS = {
+  DESKTOP_NAVIGATE: 'desktop://navigate',
 } as const;
 
 export const HTTP_HEADERS = {
