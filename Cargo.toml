@@ -22,24 +22,31 @@ axum = "0.8"
 base64 = "0.22"
 bytes = "1"
 chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
 feed-rs = "2"
 futures = "0.3"
 hex = "0.4"
 hmac = "0.12"
 http = "1"
+http-body-util = "0.1"
 ipnet = "2"
+jsonwebtoken = "9"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "builder", "smtp-transport", "hostname"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 rand = "0.8"
 redis = { version = "0.27", default-features = false, features = ["tokio-comp", "connection-manager", "aio"] }
 reqwest = { version = "0.12", default-features = false, features = ["http2", "rustls-tls", "gzip", "brotli", "stream", "json"] }
+rsa = { version = "0.9", features = ["sha2"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "uuid", "chrono", "json", "migrate"] }
 tempfile = "3"
 thiserror = "2"
 tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "request-id", "util"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2", features = ["serde"] }
