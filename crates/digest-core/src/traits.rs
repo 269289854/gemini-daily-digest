@@ -7,7 +7,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::domain::{
-    AlertPriority, FetchOutcome, NotificationChannelType, SourceScope, SourceType,
+    AlertPriority, DailyDigestSynthesisInput, FetchOutcome, NotificationChannelType, ProcessedItem,
+    RenderInput, SourceDigestInput, SourceScope, SourceSummaryResult, SourceType, UserAiConfig,
+    WatchlistRuleInput,
 };
 use crate::error::CoreError;
 
@@ -66,6 +68,16 @@ pub trait SourceCollector: Send + Sync {
         source: &SourceDescriptor,
         conditional: &ConditionalFetchHeaders,
     ) -> Result<FetchResult, CoreError>;
+
+    /// Fetches normalized candidate items using optional decrypted source credentials.
+    async fn fetch_with_credentials(
+        &self,
+        source: &SourceDescriptor,
+        conditional: &ConditionalFetchHeaders,
+        _credentials_json: Option<&serde_json::Value>,
+    ) -> Result<FetchResult, CoreError> {
+        self.fetch(source, conditional).await
+    }
 }
 
 /// Pipeline step applied to a batch of collected items (normalization, dedup, scoring).
@@ -76,6 +88,18 @@ pub trait ItemProcessor: Send + Sync {
         &self,
         items: Vec<RawCollectedItem>,
     ) -> Result<Vec<RawCollectedItem>, CoreError>;
+}
+
+/// Extended item processing pipeline supporting source context and watchlist rules.
+#[async_trait]
+pub trait StructuredItemProcessor: ItemProcessor {
+    /// Normalizes, deduplicates, matches watchlist rules, and scores items.
+    async fn process_items(
+        &self,
+        source: Option<&SourceDescriptor>,
+        items: Vec<RawCollectedItem>,
+        watchlist_rules: &[WatchlistRuleInput],
+    ) -> Result<Vec<ProcessedItem>, CoreError>;
 }
 
 /// Output produced by an LLM summarizer or deterministic fallback.
@@ -101,6 +125,28 @@ pub trait LlmProvider: Send + Sync {
     ) -> Result<SummarizedDigest, CoreError>;
 }
 
+/// Extended LLM summarization strategy supporting per-source summaries,
+/// daily synthesis, explicit `UserAiConfig`, and connectivity checks.
+#[async_trait]
+pub trait StructuredLlmProvider: LlmProvider {
+    /// Summarizes a single source's items for a digest date.
+    async fn summarize_source(
+        &self,
+        config: &UserAiConfig,
+        input: &SourceDigestInput,
+    ) -> Result<SourceSummaryResult, CoreError>;
+
+    /// Synthesizes the global daily digest across per-source summaries and highlights.
+    async fn synthesize_daily(
+        &self,
+        config: &UserAiConfig,
+        input: &DailyDigestSynthesisInput,
+    ) -> Result<SummarizedDigest, CoreError>;
+
+    /// Verifies connectivity and credentials against the configured AI endpoint.
+    async fn test_connection(&self, config: &UserAiConfig) -> Result<(), CoreError>;
+}
+
 /// Rendered digest payload ready for email or IM delivery.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -121,6 +167,16 @@ pub trait DigestRenderer: Send + Sync {
         items: &[RawCollectedItem],
         priority: AlertPriority,
     ) -> Result<RenderedNotification, CoreError>;
+
+    /// Converts structured sections, highlights, and digest metadata into multi-format output.
+    fn render_structured(&self, input: &RenderInput) -> Result<RenderedNotification, CoreError> {
+        let raw_items: Vec<RawCollectedItem> = input
+            .all_items
+            .iter()
+            .map(ProcessedItem::to_raw_item)
+            .collect();
+        self.render(&input.digest, &raw_items, input.priority)
+    }
 }
 
 /// Strategy trait implemented by each notification channel (`smtp`, `telegram`, etc.).

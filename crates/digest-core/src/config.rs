@@ -5,17 +5,22 @@ use std::time::Duration;
 
 use crate::constants::{
     DEFAULT_AI_BASE_URL, DEFAULT_AI_MODEL, DEFAULT_AI_PROVIDER_LABEL,
-    DEFAULT_ALERT_INTERVAL_MINUTES, DEFAULT_COLLECTOR_CONCURRENCY, DEFAULT_DAILY_TIME,
-    DEFAULT_GLOBAL_FETCH_CONCURRENCY, DEFAULT_HTTP_TIMEOUT_SECS, DEFAULT_ITEM_BODY_RETENTION_DAYS,
-    DEFAULT_LLM_MAX_TOKENS, DEFAULT_LLM_TEMPERATURE, DEFAULT_LLM_TIMEOUT_SECS,
-    DEFAULT_MAX_FEED_BYTES, DEFAULT_MAX_ITEMS_PER_DIGEST, DEFAULT_MAX_PAGE_SIZE,
-    DEFAULT_MAX_RETRY_ATTEMPTS, DEFAULT_PAGE_SIZE, DEFAULT_PG_MAX_CONNECTIONS,
-    DEFAULT_PUBLIC_BASE_URL, DEFAULT_REDIS_KEY_PREFIX, DEFAULT_RETRY_BACKOFF_MS,
-    DEFAULT_SERVER_BIND_ADDR, DEFAULT_SOURCE_FRESHNESS_TTL_SECS, DEFAULT_TIMEZONE,
-    DEFAULT_TOKIO_WORKER_THREADS, ENV_AUTH_MODE, ENV_GLOBAL_FETCH_CONCURRENCY,
-    ENV_ITEM_BODY_RETENTION_DAYS, ENV_MAX_FEED_BYTES, ENV_OUTBOUND_PROXY_URL,
-    ENV_PG_MAX_CONNECTIONS, ENV_PUBLIC_BASE_URL, ENV_REDIS_URL, ENV_SERVER_BIND_ADDR,
-    ENV_SOURCE_FRESHNESS_TTL_SECS, ENV_SSRF_ALLOWLIST_HOSTS, ENV_TOKIO_WORKER_THREADS,
+    DEFAULT_ALERT_INTERVAL_MINUTES, DEFAULT_COLLECTOR_BACKOFF_STEPS_SECS,
+    DEFAULT_COLLECTOR_CONCURRENCY, DEFAULT_DAILY_TIME, DEFAULT_DIGEST_FINGERPRINT_TTL_SECS,
+    DEFAULT_GLOBAL_FETCH_CONCURRENCY, DEFAULT_HTTP_MAX_REDIRECTS,
+    DEFAULT_HTTP_POOL_IDLE_TIMEOUT_SECS, DEFAULT_HTTP_TIMEOUT_SECS,
+    DEFAULT_ITEM_BODY_RETENTION_DAYS, DEFAULT_LLM_MAX_TOKENS, DEFAULT_LLM_SYSTEM_PROMPT,
+    DEFAULT_LLM_TEMPERATURE, DEFAULT_LLM_TIMEOUT_SECS, DEFAULT_MAX_FEED_BYTES,
+    DEFAULT_MAX_ITEMS_PER_DIGEST, DEFAULT_MAX_PAGE_SIZE, DEFAULT_MAX_RETRY_ATTEMPTS,
+    DEFAULT_PAGE_SIZE, DEFAULT_PG_MAX_CONNECTIONS, DEFAULT_PUBLIC_BASE_URL,
+    DEFAULT_REDIS_KEY_PREFIX, DEFAULT_RETRY_BACKOFF_MS, DEFAULT_SERVER_BIND_ADDR,
+    DEFAULT_SINGLEFLIGHT_LOCK_TTL_SECS, DEFAULT_SMTP_TIMEOUT_SECS,
+    DEFAULT_SOURCE_FRESHNESS_TTL_SECS, DEFAULT_TELEGRAM_API_BASE_URL, DEFAULT_TIMEZONE,
+    DEFAULT_TOKIO_WORKER_THREADS, DEFAULT_USER_AGENT, DEFAULT_WEBHOOK_TIMEOUT_SECS, ENV_AUTH_MODE,
+    ENV_GLOBAL_FETCH_CONCURRENCY, ENV_ITEM_BODY_RETENTION_DAYS, ENV_MAX_FEED_BYTES,
+    ENV_OUTBOUND_PROXY_URL, ENV_PG_MAX_CONNECTIONS, ENV_PUBLIC_BASE_URL, ENV_REDIS_URL,
+    ENV_SERVER_BIND_ADDR, ENV_SOURCE_FRESHNESS_TTL_SECS, ENV_SSRF_ALLOWLIST_HOSTS,
+    ENV_TOKIO_WORKER_THREADS,
 };
 use crate::domain::AuthMode;
 use crate::error::CoreError;
@@ -27,6 +32,10 @@ pub struct CollectorTuning {
     pub max_concurrency: NonZeroUsize,
     pub max_retry_attempts: NonZeroUsize,
     pub initial_backoff: Duration,
+    pub failure_backoff_steps: Vec<Duration>,
+    pub user_agent: String,
+    pub max_redirects: usize,
+    pub pool_idle_timeout: Duration,
 }
 
 impl Default for CollectorTuning {
@@ -38,6 +47,14 @@ impl Default for CollectorTuning {
             max_retry_attempts: NonZeroUsize::new(DEFAULT_MAX_RETRY_ATTEMPTS)
                 .unwrap_or(NonZeroUsize::MIN),
             initial_backoff: Duration::from_millis(DEFAULT_RETRY_BACKOFF_MS),
+            failure_backoff_steps: DEFAULT_COLLECTOR_BACKOFF_STEPS_SECS
+                .iter()
+                .copied()
+                .map(Duration::from_secs)
+                .collect(),
+            user_agent: DEFAULT_USER_AGENT.to_owned(),
+            max_redirects: DEFAULT_HTTP_MAX_REDIRECTS,
+            pool_idle_timeout: Duration::from_secs(DEFAULT_HTTP_POOL_IDLE_TIMEOUT_SECS),
         }
     }
 }
@@ -48,6 +65,7 @@ pub struct LlmTuning {
     pub default_provider_label: String,
     pub default_base_url: String,
     pub default_model: String,
+    pub default_system_prompt: String,
     pub request_timeout: Duration,
     pub default_temperature: f32,
     pub default_max_tokens: u32,
@@ -60,6 +78,7 @@ impl Default for LlmTuning {
             default_provider_label: DEFAULT_AI_PROVIDER_LABEL.to_owned(),
             default_base_url: DEFAULT_AI_BASE_URL.to_owned(),
             default_model: DEFAULT_AI_MODEL.to_owned(),
+            default_system_prompt: DEFAULT_LLM_SYSTEM_PROMPT.to_owned(),
             request_timeout: Duration::from_secs(DEFAULT_LLM_TIMEOUT_SECS),
             default_temperature: DEFAULT_LLM_TEMPERATURE,
             default_max_tokens: DEFAULT_LLM_MAX_TOKENS,
@@ -92,6 +111,24 @@ impl Default for SchedulerTuning {
     }
 }
 
+/// Outbound notifier timeouts and endpoint defaults.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotifierTuning {
+    pub smtp_timeout: Duration,
+    pub webhook_timeout: Duration,
+    pub telegram_api_base_url: String,
+}
+
+impl Default for NotifierTuning {
+    fn default() -> Self {
+        Self {
+            smtp_timeout: Duration::from_secs(DEFAULT_SMTP_TIMEOUT_SECS),
+            webhook_timeout: Duration::from_secs(DEFAULT_WEBHOOK_TIMEOUT_SECS),
+            telegram_api_base_url: DEFAULT_TELEGRAM_API_BASE_URL.to_owned(),
+        }
+    }
+}
+
 /// NIO runtime, bandwidth, memory, and cache coordinator hard limits.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceLimitsTuning {
@@ -100,6 +137,8 @@ pub struct ResourceLimitsTuning {
     pub max_feed_bytes: NonZeroUsize,
     pub global_fetch_concurrency: NonZeroUsize,
     pub source_freshness_ttl: Duration,
+    pub singleflight_lock_ttl: Duration,
+    pub digest_fingerprint_ttl: Duration,
     pub item_body_retention_days: u32,
     pub redis_key_prefix: String,
     pub redis_url: Option<String>,
@@ -115,6 +154,8 @@ impl Default for ResourceLimitsTuning {
             global_fetch_concurrency: NonZeroUsize::new(DEFAULT_GLOBAL_FETCH_CONCURRENCY)
                 .unwrap_or(NonZeroUsize::MIN),
             source_freshness_ttl: Duration::from_secs(DEFAULT_SOURCE_FRESHNESS_TTL_SECS),
+            singleflight_lock_ttl: Duration::from_secs(DEFAULT_SINGLEFLIGHT_LOCK_TTL_SECS),
+            digest_fingerprint_ttl: Duration::from_secs(DEFAULT_DIGEST_FINGERPRINT_TTL_SECS),
             item_body_retention_days: DEFAULT_ITEM_BODY_RETENTION_DAYS,
             redis_key_prefix: DEFAULT_REDIS_KEY_PREFIX.to_owned(),
             redis_url: None,
@@ -133,6 +174,7 @@ pub struct AppConfig {
     pub collector: CollectorTuning,
     pub llm: LlmTuning,
     pub scheduler: SchedulerTuning,
+    pub notifier: NotifierTuning,
     pub resources: ResourceLimitsTuning,
 }
 
@@ -147,6 +189,7 @@ impl Default for AppConfig {
             collector: CollectorTuning::default(),
             llm: LlmTuning::default(),
             scheduler: SchedulerTuning::default(),
+            notifier: NotifierTuning::default(),
             resources: ResourceLimitsTuning::default(),
         }
     }
