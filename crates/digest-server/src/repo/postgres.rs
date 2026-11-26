@@ -36,6 +36,7 @@ use super::{DigestRepo, Repositories, RunRepo, SettingsRepo, SourceRepo, UserRep
 
 const MIGRATION_0001_SQL: &str = include_str!("../../migrations/0001_init.sql");
 const MIGRATION_0002_SQL: &str = include_str!("../../migrations/0002_platform_settings.sql");
+const MIGRATION_0003_SQL: &str = include_str!("../../migrations/0003_user_locale.sql");
 
 #[derive(Debug)]
 struct EmbeddedMigrations;
@@ -61,6 +62,13 @@ impl sqlx::migrate::MigrationSource<'static> for EmbeddedMigrations {
                     std::borrow::Cow::Borrowed("platform_settings"),
                     sqlx::migrate::MigrationType::Simple,
                     std::borrow::Cow::Borrowed(MIGRATION_0002_SQL),
+                    false,
+                ),
+                sqlx::migrate::Migration::new(
+                    3,
+                    std::borrow::Cow::Borrowed("user_locale"),
+                    sqlx::migrate::MigrationType::Simple,
+                    std::borrow::Cow::Borrowed(MIGRATION_0003_SQL),
                     false,
                 ),
             ])
@@ -3044,6 +3052,16 @@ mod tests {
         );
         assert!(MIGRATION_0001_SQL.contains("setweight(to_tsvector('simple'"));
         assert!(MIGRATION_0001_SQL.contains("USING GIN (search_tsv)"));
+        assert!(MIGRATION_0003_SQL.contains("preferred_locale"));
+    }
+
+    #[tokio::test]
+    async fn embedded_migrations_include_all_three_versions_in_order() {
+        let resolved = sqlx::migrate::MigrationSource::resolve(EmbeddedMigrations)
+            .await
+            .unwrap();
+        let versions: Vec<i64> = resolved.iter().map(|m| m.version).collect();
+        assert_eq!(versions, vec![1, 2, 3]);
     }
 
     #[tokio::test]
