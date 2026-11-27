@@ -844,5 +844,49 @@ describe('SettingsPage, all 5 Settings Panels, and App Integration', () => {
         'Gemini Daily Briefing (7 items)',
       );
     });
+
+    const primaryNav = screen.getByRole('navigation', { name: /Primary Navigation/i });
+    const navButtons = primaryNav.querySelectorAll('button');
+    expect(navButtons.length).toBeGreaterThanOrEqual(5);
+    navButtons.forEach((btn) => {
+      expect(btn.className).toContain('whitespace-nowrap');
+      expect(btn.className).toContain('shrink-0');
+    });
+
+    const langGroup = screen.getByRole('group', { name: /Switch interface language/i });
+    expect(langGroup.className).toContain('whitespace-nowrap');
+    expect(langGroup.className).toContain('shrink-0');
+    langGroup.querySelectorAll('button').forEach((btn) => {
+      expect(btn.className).toContain('whitespace-nowrap');
+    });
+  });
+
+  it('ChannelsPanel auto-syncs implicit TLS and STARTTLS when toggling SMTP port between 465 and 587', async () => {
+    const api = {
+      listChannels: vi.fn().mockResolvedValue([]),
+      createChannel: vi.fn(),
+      updateChannel: vi.fn(),
+      deleteChannel: vi.fn(),
+      testChannel: vi.fn(),
+    } as unknown as ApiClient;
+
+    render(<ChannelsPanel api={api} />);
+    const portInput = (await screen.findByLabelText(/SMTP Port/i)) as HTMLInputElement;
+    const starttlsCheckbox = screen.getByLabelText(/Use STARTTLS/i) as HTMLInputElement;
+    const tlsCheckbox = screen.getByLabelText(/Use Implicit TLS/i) as HTMLInputElement;
+
+    expect(portInput.value).toBe('587');
+    expect(starttlsCheckbox.checked).toBe(true);
+    expect(tlsCheckbox.checked).toBe(false);
+
+    fireEvent.change(portInput, { target: { value: '465' } });
+    expect(portInput.value).toBe('465');
+    expect(tlsCheckbox.checked).toBe(true);
+    expect(starttlsCheckbox.checked).toBe(false);
+
+    fireEvent.change(portInput, { target: { value: '587' } });
+    expect(portInput.value).toBe('587');
+    expect(starttlsCheckbox.checked).toBe(true);
+    expect(tlsCheckbox.checked).toBe(false);
   });
 });

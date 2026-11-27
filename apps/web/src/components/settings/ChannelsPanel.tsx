@@ -220,7 +220,17 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
               min="1"
               max="65535"
               value={fields.smtpPort}
-              onChange={(e) => onChange({ smtpPort: e.target.value })}
+              onChange={(e) => {
+                const nextPort = e.target.value;
+                const trimmed = nextPort.trim();
+                if (trimmed === String(DEFAULTS.SMTP_IMPLICIT_TLS_PORT)) {
+                  onChange({ smtpPort: nextPort, smtpUseTls: true, smtpUseStarttls: false });
+                } else if (trimmed === String(DEFAULTS.SMTP_PORT)) {
+                  onChange({ smtpPort: nextPort, smtpUseStarttls: true, smtpUseTls: false });
+                } else {
+                  onChange({ smtpPort: nextPort });
+                }
+              }}
               className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-white"
             />
           </label>
@@ -268,7 +278,13 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
               <input
                 type="checkbox"
                 checked={fields.smtpUseStarttls}
-                onChange={(e) => onChange({ smtpUseStarttls: e.target.checked })}
+                onChange={(e) =>
+                  onChange(
+                    e.target.checked
+                      ? { smtpUseStarttls: true, smtpUseTls: false }
+                      : { smtpUseStarttls: false },
+                  )
+                }
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
               <span>{t('channels.smtpStarttls')}</span>
@@ -277,7 +293,13 @@ function DynamicChannelConfigFields({ channelType, fields, onChange }: DynamicCh
               <input
                 type="checkbox"
                 checked={fields.smtpUseTls}
-                onChange={(e) => onChange({ smtpUseTls: e.target.checked })}
+                onChange={(e) =>
+                  onChange(
+                    e.target.checked
+                      ? { smtpUseTls: true, smtpUseStarttls: false }
+                      : { smtpUseTls: false },
+                  )
+                }
                 className="h-4 w-4 rounded border-slate-600 bg-slate-900"
               />
               <span>{t('channels.smtpTls')}</span>

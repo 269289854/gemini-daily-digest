@@ -120,24 +120,24 @@ export function Layout({
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
       <header className="sticky top-0 z-30 border-b border-slate-800/90 bg-slate-950/90 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-3">
+        <div className="mx-auto flex max-w-7xl items-center justify-between gap-3 px-4 py-2.5 sm:px-6">
+          <div className="flex min-w-0 shrink-0 items-center gap-2.5">
             <button
               type="button"
               onClick={() => onNavigate(APP_ROUTES.DAILY)}
               className="flex items-center gap-2.5 text-left focus:outline-none"
             >
-              <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500/25 to-sky-500/20 text-emerald-300 ring-1 ring-emerald-500/30">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-500/25 to-sky-500/20 text-emerald-300 ring-1 ring-emerald-500/30">
                 <Sparkles className="h-4 w-4" />
               </span>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-semibold tracking-tight text-white sm:text-base">
+                  <span className="whitespace-nowrap text-sm font-semibold tracking-tight text-white sm:text-base">
                     {t('common.appName')}
                   </span>
                   {bridge.runtime === PlatformRuntime.DESKTOP && (
-                    <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300">
-                      <Monitor className="h-3 w-3" />
+                    <span className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-sky-500/30 bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-sky-300">
+                      <Monitor className="h-3 w-3 shrink-0" />
                       {t('common.desktopBadge')}
                     </span>
                   )}
@@ -146,7 +146,66 @@ export function Layout({
             </button>
           </div>
 
-          <nav className="hidden items-center gap-1 md:flex" aria-label={t('nav.primaryAria')}>
+          <div className="flex shrink-0 items-center gap-2">
+            <LanguageSwitcher />
+
+            <span
+              className={`inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium ${sseDisplay.pillClass}`}
+              title={t('sse.statusTooltip', { label: sseLabel })}
+            >
+              <span className={`h-2 w-2 shrink-0 rounded-full ${sseDisplay.dotClass}`} />
+              <span className="hidden sm:inline">{sseLabel}</span>
+            </span>
+
+            {authConfig && (
+              <span
+                className={`hidden shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-medium lg:inline-flex ${
+                  isOidc
+                    ? 'border-sky-500/30 bg-sky-500/10 text-sky-300'
+                    : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
+                }`}
+              >
+                <Shield className="h-3 w-3 shrink-0" />
+                {isOidc ? t('auth.modeOidc') : t('auth.modeDevBypass')}
+              </span>
+            )}
+
+            <span
+              className="hidden max-w-[160px] truncate text-xs font-medium text-slate-300 md:inline"
+              title={`${user?.email ?? userLabel}${authConfig ? ` (${isOidc ? t('auth.modeOidc') : t('auth.modeDevBypass')})` : ''}`}
+            >
+              {userLabel}
+            </span>
+
+            {isOidc && (
+              <button
+                type="button"
+                onClick={logout}
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800 hover:text-white"
+                title={t('auth.signOutTitle')}
+              >
+                <LogOut className="h-3.5 w-3.5 shrink-0" />
+                <span className="hidden sm:inline">{t('auth.logout')}</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setMobileMenuOpen((prev) => !prev)}
+              className="inline-flex shrink-0 items-center justify-center rounded-lg border border-slate-800 bg-slate-900 p-2 text-slate-300 hover:bg-slate-800 hover:text-white md:hidden"
+              aria-label={t('nav.toggleMenuAria')}
+              aria-expanded={mobileMenuOpen}
+            >
+              {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
+            </button>
+          </div>
+        </div>
+
+        <div className="hidden border-t border-slate-800/70 md:block">
+          <nav
+            className="mx-auto flex max-w-7xl items-center gap-1 overflow-x-auto px-4 py-1.5 sm:px-6"
+            aria-label={t('nav.primaryAria')}
+          >
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = currentRoute === item.route;
@@ -156,72 +215,18 @@ export function Layout({
                   type="button"
                   onClick={() => onNavigate(item.route)}
                   aria-current={isActive ? 'page' : undefined}
-                  className={`inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
+                  className={`inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                     isActive
                       ? 'bg-emerald-500/15 text-emerald-300 ring-1 ring-emerald-500/30'
                       : 'text-slate-300 hover:bg-slate-800/80 hover:text-white'
                   }`}
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-4 w-4 shrink-0" />
                   {t(item.labelKey)}
                 </button>
               );
             })}
           </nav>
-
-          <div className="flex items-center gap-2.5">
-            <LanguageSwitcher />
-
-            <span
-              className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium ${sseDisplay.pillClass}`}
-              title={t('sse.statusTooltip', { label: sseLabel })}
-            >
-              <span className={`h-2 w-2 rounded-full ${sseDisplay.dotClass}`} />
-              <span className="hidden sm:inline">{sseLabel}</span>
-            </span>
-
-            {authConfig && (
-              <span
-                className={`hidden items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium sm:inline-flex ${
-                  isOidc
-                    ? 'border-sky-500/30 bg-sky-500/10 text-sky-300'
-                    : 'border-amber-500/30 bg-amber-500/10 text-amber-300'
-                }`}
-              >
-                <Shield className="h-3 w-3" />
-                {isOidc ? t('auth.modeOidc') : t('auth.modeDevBypass')}
-              </span>
-            )}
-
-            <span
-              className="hidden max-w-[160px] truncate text-xs font-medium text-slate-300 lg:inline"
-              title={user?.email ?? userLabel}
-            >
-              {userLabel}
-            </span>
-
-            {isOidc && (
-              <button
-                type="button"
-                onClick={logout}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-700 bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition hover:border-slate-600 hover:bg-slate-800 hover:text-white"
-                title={t('auth.signOutTitle')}
-              >
-                <LogOut className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">{t('auth.logout')}</span>
-              </button>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setMobileMenuOpen((prev) => !prev)}
-              className="inline-flex items-center justify-center rounded-lg border border-slate-800 bg-slate-900 p-2 text-slate-300 hover:bg-slate-800 hover:text-white md:hidden"
-              aria-label={t('nav.toggleMenuAria')}
-              aria-expanded={mobileMenuOpen}
-            >
-              {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
-            </button>
-          </div>
         </div>
 
         {mobileMenuOpen && (
